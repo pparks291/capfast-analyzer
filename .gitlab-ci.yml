@@ -1,0 +1,119 @@
+stages:
+  - test
+  - build
+  - release
+
+variables:
+  GIT_STRATEGY: clone
+
+cache:
+  paths:
+    - node_modules/
+
+test:
+  image: node:18
+  stage: test
+  script:
+    - npm install
+    - npm test
+  except:
+    - tags
+
+build:linux:
+  image: electronuserland/builder:wine
+  stage: build
+  script:
+    - npm install
+    - npm run build
+    - npx electron-forge make --platform=linux
+  artifacts:
+    paths:
+      - out/make/
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build:mac:
+  stage: build
+  tags:
+    - macos
+  script:
+    - npm install
+    - npm run build
+    - npx electron-forge make --platform=darwin
+  artifacts:
+    paths:
+      - out/make/
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build:windows:
+  image: electronuserland/builder:wine
+  stage: build
+  script:
+    - npm install
+    - npm run build
+    - npx electron-forge make --platform=win32
+  artifacts:
+    paths:
+      - out/make/
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+create_release:
+  image: node:18
+  stage: release
+  needs:
+    - build:linux
+    - build:windows
+    - job: build:mac
+      optional: true
+  script:
+    - apt-get update -y && apt-get install -y curl jq
+    - |
+      # Get version from package.json
+      VERSION=$(node -e "console.log(require('./package.json').version)")
+      
+      # Check if release exists
+      RELEASE_EXISTS=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}" | \
+        jq -r '.message')
+      
+      # Create release if it doesn't exist
+      if [[ "$RELEASE_EXISTS" == "404 Release Not Found" ]]; then
+        curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          --data "name=v${VERSION}" \
+          --data "tag_name=v${VERSION}" \
+          --data "description=Release v${VERSION}" \
+          --data "ref=${CI_COMMIT_SHA}" \
+          --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases"
+      fi
+      
+      # Upload each artifact
+      find out/make -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" \) | while read file; do
+        filename=$(basename "$file")
+        echo "Uploading $filename to release v${VERSION}..."
+        
+        # Upload file
+        UPLOAD_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          --upload-file "$file" \
+          --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
+        
+        # Get URL from response
+        UPLOAD_URL=$(echo $UPLOAD_RESPONSE | jq -r ".url")
+        
+        # Add file to release
+        curl --request POST \
+          --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          --data "name=${filename}" \
+          --data "url=${UPLOAD_URL}" \
+          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links"
+      done
+  only:
+    - main
+    - tags 
