@@ -12,13 +12,16 @@ cache:
 build:linux:
   image: electronuserland/builder:wine
   stage: build
-  script:
+  before_script:
+    - apt-get update
+    - apt-get install -y dpkg fakeroot
     - npm install
+  script:
     - npm run build
     - npx electron-forge make --platform=linux
   artifacts:
     paths:
-      - out/make/
+      - out/make/**/*
     expire_in: 1 week
   only:
     - main
@@ -59,13 +62,16 @@ build:mac-arm64:
 build:windows:
   image: electronuserland/builder:wine
   stage: build
-  script:
+  before_script:
+    - apt-get update
+    - apt-get install -y wine mono-complete
     - npm install
+  script:
     - npm run build
     - npx electron-forge make --platform=win32
   artifacts:
     paths:
-      - out/make/
+      - out/make/**/*
     expire_in: 1 week
   only:
     - main
