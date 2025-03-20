@@ -186,21 +186,6 @@ sync-to-github:
             break
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
-            echo "Checking workflow logs for errors..."
-            
-            # Get job details
-            JOBS_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/jobs")
-            
-            echo "Job details:"
-            echo "$JOBS_DATA" | jq '.'
-            
-            # For each job, get step details
-            echo "Step details:"
-            echo "$JOBS_DATA" | jq -c '.jobs[]' | while read -r job; do
-              echo "$job" | jq '.'
-            done
-            
             exit 1
           fi
         fi
@@ -218,6 +203,7 @@ sync-to-github:
       # Download macOS artifacts
       echo "Downloading macOS artifacts..."
       mkdir -p dist
+      cd dist
       
       # Get list of artifacts
       ARTIFACTS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
@@ -227,13 +213,14 @@ sync-to-github:
       echo "$ARTIFACTS" | jq '.'
       
       # Download each artifact
-      echo "$ARTIFACTS" | jq -r '.artifacts[] | .archive_download_url' | while read -r url; do
+      for url in $(echo "$ARTIFACTS" | jq -r '.artifacts[].archive_download_url'); do
         echo "Downloading from $url"
         curl -L -H "Authorization: token $GITHUB_TOKEN" "$url" -o artifact.zip
-        unzip -o artifact.zip -d dist/
+        unzip -o artifact.zip
         rm artifact.zip
       done
       
+      cd ..
       echo "Downloaded files in dist directory:"
       ls -la dist/
       
