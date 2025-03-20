@@ -1279,8 +1279,11 @@
               y: scaleLatency(point.latency, yAxisScale)
             });
           } else {
+            // For time-based formats, convert the Unix timestamp to a proper JS Date
+            const date = new Date(point.timestamp * 1000);
+            console.log(`Sample timestamp: ${point.timestamp}, Date: ${date.toISOString()}`);
             pointData.push({
-              x: new Date(point.timestamp * 1000),
+              x: date,
               y: scaleLatency(point.latency, yAxisScale)
             });
           }
@@ -1296,9 +1299,16 @@
         }));
         
       } else if (xAxisFormat.startsWith('time')) {
-        // For wall clock, use date objects
+        // For wall clock, use date objects with timezone adjustment
         pointData = signalData.sampleData.map(point => {
+          // Convert Unix timestamp to JS Date (multiply by 1000 to convert seconds to milliseconds)
           const date = new Date(point.timestamp * 1000);
+          
+          // Log a sample of conversions to debug
+          if (Math.random() < 0.001) {
+            console.log(`Time conversion: ${point.timestamp} seconds → ${date.toISOString()}`);
+          }
+          
           return {
             x: date,
             y: scaleLatency(point.latency, yAxisScale)
@@ -1404,7 +1414,8 @@
                     }
                   }
                   return value;
-                }
+                },
+                source: 'auto'
               }
             },
             y: {
