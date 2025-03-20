@@ -30,7 +30,8 @@
         "appId": "com.capfast.analyzer",
         "productName": "CapFast Analyzer",
         "directories": {
-            "output": "dist"
+            "output": "dist",
+            "buildResources": "build"
         },
         "files": [
             "**/*",
@@ -50,7 +51,12 @@
             "target": [
                 "dmg"
             ],
-            "category": "public.app-category.utilities"
+            "category": "public.app-category.utilities",
+            "hardenedRuntime": true,
+            "gatekeeperAssess": false,
+            "entitlements": "build/entitlements.mac.plist",
+            "entitlementsInherit": "build/entitlements.mac.plist",
+            "identity": null
         },
         "win": {
             "target": [
