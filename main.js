@@ -928,6 +928,54 @@ function createWorker(signalChunk, workerId) {
       // Notify parent process that we're done
       parentPort.postMessage({ done: true });
       
+      // Reduce data points array to target length while preserving distribution
+      function reduceDataPoints(dataPoints, targetLength) {
+        // If already at or below target length, return as is
+        if (dataPoints.length <= targetLength) {
+          return dataPoints;
+        }
+        
+        // For very large reductions, use systematic sampling
+        if (dataPoints.length > targetLength * 10) {
+          // Calculate the sampling interval
+          const interval = Math.floor(dataPoints.length / targetLength);
+          const result = [];
+          
+          // Systematic sampling: take every nth item
+          for (let i = 0; i < dataPoints.length; i += interval) {
+            result.push(dataPoints[i]);
+          }
+          
+          // Add the last point if it's not already included
+          if (result.length < targetLength && result[result.length - 1] !== dataPoints[dataPoints.length - 1]) {
+            result.push(dataPoints[dataPoints.length - 1]);
+          }
+          
+          return result;
+        }
+        
+        // For smaller reductions, use a more precise approach
+        // Sort the data by timestamp if not already sorted
+        dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // We want to keep the first and last points for time range consistency
+        const result = [dataPoints[0]];
+        
+        // Calculate interval between points
+        const step = (dataPoints.length - 2) / (targetLength - 2);
+        
+        // Add interior points
+        for (let i = 1; i < targetLength - 1; i++) {
+          const index = Math.floor(1 + i * step);
+          result.push(dataPoints[index]);
+        }
+        
+        // Add the last point
+        result.push(dataPoints[dataPoints.length - 1]);
+        
+        return result;
+      }
+      
       // Calculate histogram of latency values - OPTIMIZED TO AVOID STACK OVERFLOW
       function createHistogram(values, bins) {
         if (values.length === 0) return { bins: [], counts: [] };
@@ -1350,6 +1398,54 @@ function createHistogram(values, bins) {
     bins: binCenters,
     counts
   };
+}
+
+// Reduce data points array to target length while preserving distribution
+function reduceDataPoints(dataPoints, targetLength) {
+  // If already at or below target length, return as is
+  if (dataPoints.length <= targetLength) {
+    return dataPoints;
+  }
+  
+  // For very large reductions, use systematic sampling
+  if (dataPoints.length > targetLength * 10) {
+    // Calculate the sampling interval
+    const interval = Math.floor(dataPoints.length / targetLength);
+    const result = [];
+    
+    // Systematic sampling: take every nth item
+    for (let i = 0; i < dataPoints.length; i += interval) {
+      result.push(dataPoints[i]);
+    }
+    
+    // Add the last point if it's not already included
+    if (result.length < targetLength && result[result.length - 1] !== dataPoints[dataPoints.length - 1]) {
+      result.push(dataPoints[dataPoints.length - 1]);
+    }
+    
+    return result;
+  }
+  
+  // For smaller reductions, use a more precise approach
+  // Sort the data by timestamp if not already sorted
+  dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+  
+  // We want to keep the first and last points for time range consistency
+  const result = [dataPoints[0]];
+  
+  // Calculate interval between points
+  const step = (dataPoints.length - 2) / (targetLength - 2);
+  
+  // Add interior points
+  for (let i = 1; i < targetLength - 1; i++) {
+    const index = Math.floor(1 + i * step);
+    result.push(dataPoints[index]);
+  }
+  
+  // Add the last point
+  result.push(dataPoints[dataPoints.length - 1]);
+  
+  return result;
 }
 
 // Update progress bar and status
