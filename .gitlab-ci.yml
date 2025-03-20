@@ -99,10 +99,10 @@ build:windows:
     - npm install
   script:
     - npm run build
-    - npx electron-forge make --platform=win32
+    - npx electron-builder --windows nsis
   artifacts:
     paths:
-      - out/make/**/*
+      - dist/**/*
     expire_in: 1 week
   only:
     - main
@@ -137,7 +137,7 @@ create_release:
       fi
       
       # Upload each artifact
-      find out/make -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" \) | while read file; do
+      find dist -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.zip" \) | while read file; do
         filename=$(basename "$file")
         echo "Uploading $filename to release v${VERSION}..."
         
