@@ -1,5 +1,6 @@
 stages:
   - build
+  - release
 
 variables:
   GIT_STRATEGY: clone
@@ -127,7 +128,7 @@ build:windows:
     - tags
 
 create_release:
-  stage: build
+  stage: release
   image: node:18
   needs:
     - job: build:linux
