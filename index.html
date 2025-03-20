@@ -1282,21 +1282,21 @@
             // For wall clock, use date objects with timezone adjustment
             const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
             
-            // Create a fixed reference date at the Unix epoch (Jan 1, 1970)
-            // Then add the timestamp seconds to create a proper date
-            // This ensures that timestamps are properly treated as seconds since the epoch
-            const dateObj = new Date(0); // Unix epoch
-            dateObj.setSeconds(timestampValue);
-            
-            // Log every 1000th conversion for debugging
-            if (Math.random() < 0.001) {
-              console.log({
+            // Debug log more timestamps to understand the data
+            if (Math.random() < 0.01) {
+              console.error("POINT TIMESTAMP DEBUG:", { 
                 original: point.timestamp,
-                asNumber: timestampValue,
-                asDate: dateObj.toISOString(),
-                valid: !isNaN(dateObj.getTime())
+                parsed: timestampValue,
+                date: new Date(timestampValue * 1000).toISOString()
               });
             }
+            
+            // Create a JavaScript timestamp (milliseconds since epoch)
+            // Important: Our timestamps are in SECONDS, JS expects MILLISECONDS
+            const jsTimestamp = timestampValue * 1000;
+            
+            // Create Date using the proper millisecond timestamp
+            const dateObj = new Date(jsTimestamp);
             
             pointData.push({
               x: dateObj,
@@ -1320,21 +1320,21 @@
           // Handle potential string timestamps
           const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
           
-          // Create a fixed reference date at the Unix epoch (Jan 1, 1970)
-          // Then add the timestamp seconds to create a proper date
-          // This ensures that timestamps are properly treated as seconds since the epoch
-          const dateObj = new Date(0); // Unix epoch
-          dateObj.setSeconds(timestampValue);
-          
-          // Log every 1000th conversion for debugging
-          if (Math.random() < 0.001) {
-            console.log({
+          // Debug log more timestamps to understand the data
+          if (Math.random() < 0.01) {
+            console.error("POINT TIMESTAMP DEBUG:", { 
               original: point.timestamp,
-              asNumber: timestampValue,
-              asDate: dateObj.toISOString(),
-              valid: !isNaN(dateObj.getTime())
+              parsed: timestampValue,
+              date: new Date(timestampValue * 1000).toISOString()
             });
           }
+          
+          // Create a JavaScript timestamp (milliseconds since epoch)
+          // Important: Our timestamps are in SECONDS, JS expects MILLISECONDS
+          const jsTimestamp = timestampValue * 1000;
+          
+          // Create Date using the proper millisecond timestamp
+          const dateObj = new Date(jsTimestamp);
           
           return {
             x: dateObj,
@@ -1424,6 +1424,7 @@
               time: xAxisType === 'time' ? {
                 parser: 'auto',
                 unit: 'minute',
+                minUnit: 'second',
                 displayFormats: {
                   millisecond: 'HH:mm:ss.SSS',
                   second: 'HH:mm:ss',
@@ -1431,81 +1432,84 @@
                   hour: 'HH:mm'
                 },
                 tooltipFormat: 'HH:mm:ss.SSS',
-                round: false
+                round: false,
+                distribution: 'linear'
               } : undefined,
               ticks: {
                 // Fix time display by ensuring proper date object conversion
                 callback: function(value, index, values) {
-                  if (xAxisType === 'time') {
-                    // For Chart.js Time scale, ensure we have a valid date
-                    let date;
+                  // For Chart.js Time scale, ensure we have a valid date
+                  let date;
+                  
+                  // Debug: Log every tick value
+                  console.error("DEBUG TICK VALUE:", {
+                    rawValue: value,
+                    type: typeof value,
+                    isDate: value instanceof Date,
+                    valueString: String(value)
+                  });
+                  
+                  // DIRECT UNIX TIMESTAMP HANDLING:
+                  // If value looks like a Unix timestamp (milliseconds since epoch)
+                  if (typeof value === 'number' && value > 1000000000000) {
+                    // Handle directly as JavaScript timestamp (milliseconds since epoch)
+                    const jsDate = new Date(value);
                     
-                    // Handle different input types correctly
-                    if (value instanceof Date) {
-                      date = value;
-                    } else if (typeof value === 'number') {
-                      // If it's a timestamp in milliseconds, convert to Date
-                      date = new Date(value);
-                    } else {
-                      // If it's something else, try to create a date from it
-                      date = new Date(value);
-                    }
-                    
-                    // Check if date is valid
-                    if (isNaN(date.getTime())) {
-                      console.error('Invalid date in tick callback:', value);
-                      return 'Invalid';
-                    }
-                    
-                    // Log occasional sample
-                    if (Math.random() < 0.01) {
-                      console.log('Tick date info:', {
-                        inputValue: value,
-                        dateObject: date,
-                        timeString: date.toTimeString(),
-                        timezone: xAxisFormat
-                      });
-                    }
-                    
-                    // Force timezone-specific formatting without depending on Chart.js
-                    if (xAxisFormat === 'time-hawaii') {
-                      // Format date for Hawaii timezone manually
-                      const options = { 
-                        hour: '2-digit', 
-                        minute: '2-digit',
+                    // Format with timeZone option
+                    return jsDate.toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                      hour12: false,
+                      timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
+                                xAxisFormat === 'time-chile' ? 'America/Santiago' : 
+                                'UTC'
+                    });
+                  }
+                  
+                  // Our regular date objects - should have set timestamp correctly when created
+                  if (value instanceof Date) {
+                    try {
+                      return value.toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit', 
                         second: '2-digit',
                         hour12: false,
-                        timeZone: 'Pacific/Honolulu' 
-                      };
+                        timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
+                                  xAxisFormat === 'time-chile' ? 'America/Santiago' :
+                                  'UTC'
+                      });
+                    } catch (e) {
+                      console.error("Date formatting error:", e);
+                      return 'Error';
+                    }
+                  }
+                  
+                  // FALLBACK - try to parse as number
+                  if (typeof value === 'string') {
+                    // Try to parse as number
+                    const numValue = parseFloat(value);
+                    if (!isNaN(numValue) && numValue > 0) {
+                      // Create date using setTime for precision
+                      const numDate = new Date(0);
+                      numDate.setTime(numValue);
                       
-                      try {
-                        return date.toLocaleTimeString('en-US', options);
-                      } catch (e) {
-                        console.error('Error formatting time:', e);
-                        // Fallback to basic formatting
-                        return date.toTimeString().split(' ')[0];
-                      }
-                    } else if (xAxisFormat === 'time-chile') {
-                      // Format date for Chile timezone manually
-                      return date.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
+                      // Format
+                      return numDate.toLocaleTimeString('en-US', {
+                        hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
                         hour12: false,
-                        timeZone: 'America/Santiago' 
-                      });
-                    } else {
-                      // UTC or other time format
-                      return date.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: false,
-                        timeZone: 'UTC' 
+                        timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
+                                  xAxisFormat === 'time-chile' ? 'America/Santiago' :
+                                  'UTC'
                       });
                     }
                   }
-                  return value;
+                  
+                  // If we got here, we failed to parse the value
+                  console.error('Invalid date value format:', value);
+                  return 'Invalid';
                 },
                 source: 'auto',
                 autoSkip: true,
