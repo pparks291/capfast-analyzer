@@ -1402,23 +1402,11 @@
           },
           scales: {
             x: {
-              type: xAxisType,
+              type: xAxisFormat.startsWith('time') ? 'linear' : xAxisType, // Always use linear for time to ensure proper labeling
               title: {
                 display: true,
                 text: xAxisLabel
               },
-              // For time axis, don't use the adapters which can cause issues
-              time: xAxisType === 'time' ? {
-                unit: 'minute',
-                minUnit: 'second',
-                displayFormats: {
-                  millisecond: 'HH:mm:ss.SSS',
-                  second: 'HH:mm:ss',
-                  minute: 'HH:mm',
-                  hour: 'HH:mm'
-                },
-                tooltipFormat: 'HH:mm:ss.SSS',
-              } : undefined,
               ticks: {
                 // Format tick labels based on the chosen time format
                 callback: function(value, index, values) {
@@ -1427,7 +1415,7 @@
                   }
                   
                   // For time formats, value should be a timestamp in milliseconds
-                  if (typeof value === 'number') {
+                  if (typeof value === 'number' && xAxisFormat.startsWith('time')) {
                     try {
                       // Create a date from the millisecond timestamp
                       const date = new Date(value);
@@ -1460,8 +1448,7 @@
                     }
                   }
                   
-                  console.error(`Unexpected value type: ${typeof value}`);
-                  return 'Unknown';
+                  return value.toString();
                 },
                 autoSkip: true,
                 maxRotation: 0
@@ -1489,6 +1476,12 @@
                       // Create a date from the millisecond timestamp
                       const date = new Date(point.x);
                       
+                      // Check if the date is valid
+                      if (isNaN(date.getTime())) {
+                        console.error(`Invalid date from tooltip: ${point.x}`);
+                        return `Time: Invalid, Latency: ${yLabel}`;
+                      }
+                      
                       // Format the date based on the selected timezone
                       let timeZone = 'UTC';
                       if (xAxisFormat === 'time-hawaii') {
@@ -1498,15 +1491,17 @@
                       }
                       
                       const localTimeStr = date.toLocaleTimeString('en-US', { 
-                        hour12: false,
+                        hour: '2-digit',
+                        minute: '2-digit',
                         second: '2-digit',
+                        hour12: false,
                         timeZone: timeZone
                       });
                       
                       return `Time: ${localTimeStr}, Latency: ${yLabel}`;
                     } catch (e) {
-                      console.error(`Error in tooltip: ${e.message}`);
-                      return `Time: (error), Latency: ${yLabel}`;
+                      console.error(`Error in tooltip: ${e.message}, value: ${point.x}`);
+                      return `Time: Error, Latency: ${yLabel}`;
                     }
                   } else {
                     return `Time: ${point.x.toFixed(3)}s, Latency: ${yLabel}`;
