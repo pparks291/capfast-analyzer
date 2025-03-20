@@ -184,6 +184,10 @@ sync-to-github:
               fi
             done
             
+            # List downloaded files
+            echo "Downloaded files in dist directory:"
+            ls -la dist/
+            
             # Create flag file to indicate macOS builds are ready
             touch .macos_builds_ready
             break
