@@ -81,10 +81,10 @@ build:linux:
     - npm install
   script:
     - npm run build
-    - npx electron-forge make --platform=linux
+    - npx electron-builder --linux AppImage
   artifacts:
     paths:
-      - out/make/**/*
+      - dist/**/*
     expire_in: 1 week
   only:
     - main
