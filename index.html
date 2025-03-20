@@ -743,7 +743,10 @@
           if (value.includes(':')) {
             const [hours, minutes, seconds] = value.split(':').map(Number);
             const date = new Date();
-            date.setHours(hours, minutes, seconds);
+            // Set current date but the provided time
+            date.setHours(hours || 0, minutes || 0, seconds || 0, 0);
+            
+            // For time modes, we need to return the millisecond timestamp
             return date.getTime();
           }
         }
@@ -766,10 +769,19 @@
       
       // Update the chart's scales
       const options = timeSeriesChart.options;
+      const xAxisFormat = document.getElementById('x-axis-format').value;
       
       if (xMin && xMax) {
-        options.scales.x.min = parseAxisValue(xMin, 'x');
-        options.scales.x.max = parseAxisValue(xMax, 'x');
+        // For time format, we need to convert time strings to date objects
+        if (xAxisFormat.startsWith('time-')) {
+          console.log(`Parsing time range: ${xMin} to ${xMax}`);
+          options.scales.x.min = parseAxisValue(xMin, 'x');
+          options.scales.x.max = parseAxisValue(xMax, 'x');
+          console.log(`Parsed to timestamps: ${options.scales.x.min} to ${options.scales.x.max}`);
+        } else {
+          options.scales.x.min = parseAxisValue(xMin, 'x');
+          options.scales.x.max = parseAxisValue(xMax, 'x');
+        }
       }
       
       if (yMin && yMax) {
@@ -1348,18 +1360,33 @@
               },
               adapters: {
                 date: {
-                  timezone: xAxisFormat === 'time-hawaii' ? 'UTC-10' : 
-                           xAxisFormat === 'time-chile' ? 'UTC-4' : 
+                  timezone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' : 
+                           xAxisFormat === 'time-chile' ? 'America/Santiago' : 
                            'UTC'
                 }
               },
               time: xAxisType === 'time' ? {
                 unit: 'minute',
                 displayFormats: {
-                  minute: 'HH:mm:ss'
+                  millisecond: 'HH:mm:ss.SSS',
+                  second: 'HH:mm:ss',
+                  minute: 'HH:mm',
+                  hour: 'HH:mm'
                 },
-                tooltipFormat: 'HH:mm:ss'
-              } : undefined
+                tooltipFormat: 'HH:mm:ss.SSS'
+              } : undefined,
+              ticks: {
+                // Ensure time ticks display properly
+                callback: function(value, index, values) {
+                  if (xAxisType === 'time') {
+                    const date = new Date(value);
+                    // Format depends on the zoom level/tick density
+                    const format = values.length > 10 ? 'HH:mm:ss' : 'HH:mm:ss.SSS';
+                    return new Date(value).toLocaleTimeString();
+                  }
+                  return value;
+                }
+              }
             },
             y: {
               title: {
