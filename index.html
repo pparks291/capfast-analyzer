@@ -331,6 +331,51 @@
             </div>
           </div>
         </div>
+        
+        <!-- Manual zoom controls -->
+        <div class="chart-controls" style="margin-bottom: 15px; border: 1px solid #eee; padding: 10px; border-radius: 5px; background-color: #f9f9f9;">
+          <div style="display: flex; gap: 20px; margin-bottom: 10px;">
+            <div>
+              <h4 style="margin: 0 0 5px 0; font-size: 14px;">Manual Zoom</h4>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <div>
+                  <label for="x-min" style="font-size: 12px;">X Min:</label>
+                  <input type="text" id="x-min" style="width: 80px; padding: 4px;">
+                </div>
+                <div>
+                  <label for="x-max" style="font-size: 12px;">X Max:</label>
+                  <input type="text" id="x-max" style="width: 80px; padding: 4px;">
+                </div>
+                <div>
+                  <label for="y-min" style="font-size: 12px;">Y Min:</label>
+                  <input type="text" id="y-min" style="width: 80px; padding: 4px;">
+                </div>
+                <div>
+                  <label for="y-max" style="font-size: 12px;">Y Max:</label>
+                  <input type="text" id="y-max" style="width: 80px; padding: 4px;">
+                </div>
+                <button id="apply-manual-zoom" style="padding: 4px 8px;">Apply Zoom</button>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <h4 style="margin: 0 0 5px 0; font-size: 14px;">Time Range Selector</h4>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <div>
+                <label for="time-start" style="font-size: 12px;">Start:</label>
+                <input type="text" id="time-start" placeholder="seconds or HH:MM:SS" style="width: 150px; padding: 4px;">
+              </div>
+              <div>
+                <label for="time-end" style="font-size: 12px;">End:</label>
+                <input type="text" id="time-end" placeholder="seconds or HH:MM:SS" style="width: 150px; padding: 4px;">
+              </div>
+              <button id="apply-time-range" style="padding: 4px 8px;">Apply Range</button>
+              <button id="reset-time-range" style="padding: 4px 8px;">Reset</button>
+            </div>
+          </div>
+        </div>
+        
         <div class="chart-container">
           <canvas id="time-series-chart"></canvas>
         </div>
@@ -348,6 +393,33 @@
             </div>
           </div>
         </div>
+        
+        <!-- Manual zoom controls for distribution chart -->
+        <div class="chart-controls" style="margin-bottom: 15px; border: 1px solid #eee; padding: 10px; border-radius: 5px; background-color: #f9f9f9;">
+          <div>
+            <h4 style="margin: 0 0 5px 0; font-size: 14px;">Manual Zoom</h4>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <div>
+                <label for="dist-x-min" style="font-size: 12px;">X Min:</label>
+                <input type="text" id="dist-x-min" style="width: 80px; padding: 4px;">
+              </div>
+              <div>
+                <label for="dist-x-max" style="font-size: 12px;">X Max:</label>
+                <input type="text" id="dist-x-max" style="width: 80px; padding: 4px;">
+              </div>
+              <div>
+                <label for="dist-y-min" style="font-size: 12px;">Y Min:</label>
+                <input type="text" id="dist-y-min" style="width: 80px; padding: 4px;">
+              </div>
+              <div>
+                <label for="dist-y-max" style="font-size: 12px;">Y Max:</label>
+                <input type="text" id="dist-y-max" style="width: 80px; padding: 4px;">
+              </div>
+              <button id="apply-dist-manual-zoom" style="padding: 4px 8px;">Apply Zoom</button>
+            </div>
+          </div>
+        </div>
+        
         <div class="chart-container">
           <canvas id="distribution-chart"></canvas>
         </div>
@@ -580,6 +652,164 @@
       if (searchTerm && matchFound) {
         updateCharts();
       }
+    });
+    
+    // Initialize the manual zoom and time range inputs
+    function updateZoomInputs() {
+      if (timeSeriesChart) {
+        const xAxis = timeSeriesChart.scales.x;
+        const yAxis = timeSeriesChart.scales.y;
+        
+        document.getElementById('x-min').value = xAxis.min !== undefined ? formatAxisValue(xAxis.min, 'x') : '';
+        document.getElementById('x-max').value = xAxis.max !== undefined ? formatAxisValue(xAxis.max, 'x') : '';
+        document.getElementById('y-min').value = yAxis.min !== undefined ? formatAxisValue(yAxis.min, 'y') : '';
+        document.getElementById('y-max').value = yAxis.max !== undefined ? formatAxisValue(yAxis.max, 'y') : '';
+      }
+    }
+    
+    // Format axis values depending on the axis and current options
+    function formatAxisValue(value, axis) {
+      if (axis === 'x') {
+        const xAxisFormat = document.getElementById('x-axis-format').value;
+        if (xAxisFormat.startsWith('time-')) {
+          // Format as time
+          const date = new Date(value);
+          return date.toISOString().substr(11, 8); // Extract HH:MM:SS
+        } else {
+          // Format as seconds
+          return value.toFixed(3);
+        }
+      } else {
+        // Format Y axis based on scale
+        const yAxisScale = document.getElementById('y-axis-scale').value;
+        const precision = yAxisScale === 'ns' ? 0 : (yAxisScale === 'us' ? 2 : 3);
+        return value.toFixed(precision);
+      }
+    }
+    
+    // Parse axis value based on axis type
+    function parseAxisValue(value, axis) {
+      if (axis === 'x') {
+        const xAxisFormat = document.getElementById('x-axis-format').value;
+        if (xAxisFormat.startsWith('time-')) {
+          // Parse time format (HH:MM:SS)
+          if (value.includes(':')) {
+            const [hours, minutes, seconds] = value.split(':').map(Number);
+            const date = new Date();
+            date.setHours(hours, minutes, seconds);
+            return date.getTime();
+          }
+        }
+        // Default to parsing as float (seconds)
+        return parseFloat(value);
+      } else {
+        // Parse Y value as float
+        return parseFloat(value);
+      }
+    }
+    
+    // Apply manual zoom when the Apply button is clicked
+    document.getElementById('apply-manual-zoom').addEventListener('click', () => {
+      if (!timeSeriesChart) return;
+      
+      const xMin = document.getElementById('x-min').value;
+      const xMax = document.getElementById('x-max').value;
+      const yMin = document.getElementById('y-min').value;
+      const yMax = document.getElementById('y-max').value;
+      
+      // Update the chart's scales
+      const options = timeSeriesChart.options;
+      
+      if (xMin && xMax) {
+        options.scales.x.min = parseAxisValue(xMin, 'x');
+        options.scales.x.max = parseAxisValue(xMax, 'x');
+      }
+      
+      if (yMin && yMax) {
+        options.scales.y.min = parseAxisValue(yMin, 'y');
+        options.scales.y.max = parseAxisValue(yMax, 'y');
+      }
+      
+      timeSeriesChart.update();
+    });
+    
+    // Update input fields when chart is zoomed
+    function onChartZoom() {
+      updateZoomInputs();
+    }
+    
+    // Time range selection
+    let originalTimeSeriesData = null;
+    
+    document.getElementById('apply-time-range').addEventListener('click', () => {
+      if (!timeSeriesChart) return;
+      
+      const startValue = document.getElementById('time-start').value;
+      const endValue = document.getElementById('time-end').value;
+      
+      if (!startValue || !endValue) {
+        alert('Please enter both start and end time values');
+        return;
+      }
+      
+      // Store original data if not already stored
+      if (!originalTimeSeriesData) {
+        originalTimeSeriesData = [...timeSeriesChart.data.datasets[0].data];
+      }
+      
+      // Parse start and end times
+      const xAxisFormat = document.getElementById('x-axis-format').value;
+      let startTime, endTime;
+      
+      if (xAxisFormat.startsWith('time-')) {
+        // Parse as time strings (HH:MM:SS)
+        if (startValue.includes(':') && endValue.includes(':')) {
+          const [startHours, startMinutes, startSeconds] = startValue.split(':').map(Number);
+          const [endHours, endMinutes, endSeconds] = endValue.split(':').map(Number);
+          
+          const startDate = new Date();
+          startDate.setHours(startHours, startMinutes, startSeconds, 0);
+          
+          const endDate = new Date();
+          endDate.setHours(endHours, endMinutes, endSeconds, 0);
+          
+          startTime = startDate.getTime();
+          endTime = endDate.getTime();
+        } else {
+          alert('For time format, please enter time as HH:MM:SS');
+          return;
+        }
+      } else {
+        // Parse as seconds
+        startTime = parseFloat(startValue);
+        endTime = parseFloat(endValue);
+      }
+      
+      // Filter data based on time range
+      const filteredData = originalTimeSeriesData.filter(point => {
+        return point.x >= startTime && point.x <= endTime;
+      });
+      
+      // Update chart with filtered data
+      timeSeriesChart.data.datasets[0].data = filteredData;
+      timeSeriesChart.update();
+      
+      console.log(`Applied time range filter: ${startTime} to ${endTime}, showing ${filteredData.length} points`);
+    });
+    
+    // Reset time range filter
+    document.getElementById('reset-time-range').addEventListener('click', () => {
+      if (!timeSeriesChart || !originalTimeSeriesData) return;
+      
+      // Restore original data
+      timeSeriesChart.data.datasets[0].data = originalTimeSeriesData;
+      timeSeriesChart.update();
+      
+      // Clear input fields
+      document.getElementById('time-start').value = '';
+      document.getElementById('time-end').value = '';
+      
+      console.log('Reset time range filter');
     });
     
     // Handle x-axis format change
@@ -1084,6 +1314,8 @@
                   const chart = this.chart;
                   // Performance check
                   console.log('Zoom event detected');
+                  // Update manual zoom inputs to match current zoom state
+                  updateZoomInputs();
                 }
               }
             }
@@ -1093,6 +1325,9 @@
       
       // Create new chart
       timeSeriesChart = new Chart(ctx, config);
+      
+      // Initialize manual zoom input fields
+      updateZoomInputs();
     }
     
     // Update distribution chart with new data
@@ -1171,7 +1406,11 @@
                   enabled: true
                 },
                 mode: 'xy',
-                sensitivity: 3 // Lower sensitivity for better control
+                sensitivity: 3, // Lower sensitivity for better control
+                onZoom: function() {
+                  // Update manual zoom inputs to match current zoom state
+                  updateDistZoomInputs();
+                }
               }
             }
           }
@@ -1180,7 +1419,48 @@
       
       // Create new chart
       distributionChart = new Chart(ctx, config);
+      
+      // Initialize manual zoom input fields
+      updateDistZoomInputs();
     }
+    
+    // Update distribution zoom input fields
+    function updateDistZoomInputs() {
+      if (distributionChart) {
+        const xAxis = distributionChart.scales.x;
+        const yAxis = distributionChart.scales.y;
+        
+        document.getElementById('dist-x-min').value = xAxis.min !== undefined ? xAxis.min.toFixed(3) : '';
+        document.getElementById('dist-x-max').value = xAxis.max !== undefined ? xAxis.max.toFixed(3) : '';
+        document.getElementById('dist-y-min').value = yAxis.min !== undefined ? yAxis.min.toFixed(0) : '';
+        document.getElementById('dist-y-max').value = yAxis.max !== undefined ? yAxis.max.toFixed(0) : '';
+      }
+    }
+    
+    // Apply manual zoom for distribution chart
+    document.getElementById('apply-dist-manual-zoom').addEventListener('click', () => {
+      if (!distributionChart) return;
+      
+      const xMin = document.getElementById('dist-x-min').value;
+      const xMax = document.getElementById('dist-x-max').value;
+      const yMin = document.getElementById('dist-y-min').value;
+      const yMax = document.getElementById('dist-y-max').value;
+      
+      // Update the chart's scales
+      const options = distributionChart.options;
+      
+      if (xMin && xMax) {
+        options.scales.x.min = parseFloat(xMin);
+        options.scales.x.max = parseFloat(xMax);
+      }
+      
+      if (yMin && yMax) {
+        options.scales.y.min = parseFloat(yMin);
+        options.scales.y.max = parseFloat(yMax);
+      }
+      
+      distributionChart.update();
+    });
     
     // Update statistics table
     function updateStatisticsTable(signalData, yAxisScale) {
