@@ -243,6 +243,26 @@ create_release:
       
       # Get version from package.json
       VERSION=$(node -e "console.log(require('./package.json').version)")
+      echo "Processing release v${VERSION}..."
+      
+      # Check if release exists
+      EXISTING_RELEASE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
+      
+      if [ "$(echo "$EXISTING_RELEASE" | jq -r '.message')" != "404 Release Not Found" ]; then
+        echo "Release v${VERSION} already exists, deleting it first..."
+        DELETE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          --request DELETE \
+          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
+        
+        if [ $? -ne 0 ]; then
+          echo "Failed to delete existing release. Response:"
+          echo "$DELETE_RESPONSE" | jq '.'
+          exit 1
+        fi
+        echo "Existing release deleted successfully"
+      fi
+      
       echo "Creating release v${VERSION}..."
       
       # Create the release
@@ -320,11 +340,6 @@ create_release:
       # Upload Windows installer
       if [ -f "dist/CapFast Analyzer Setup ${VERSION}.exe" ]; then
         upload_and_link_file "dist/CapFast Analyzer Setup ${VERSION}.exe" "CapFast Analyzer Setup v${VERSION}.exe"
-      fi
-      
-      # Upload Windows portable executable
-      if [ -f "dist/CapFast Analyzer.exe" ]; then
-        upload_and_link_file "dist/CapFast Analyzer.exe" "CapFast Analyzer v${VERSION} Portable.exe"
       fi
       
       # Upload Linux AppImage
