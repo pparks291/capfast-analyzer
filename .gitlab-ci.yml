@@ -36,14 +36,34 @@ build:builder-image:
       # Build the builder image with all dependencies
       docker build -t $CONTAINER_BUILD_IMAGE -f- . <<EOF
       FROM electronuserland/builder:wine
-      RUN apt-get update && apt-get install -y dpkg fakeroot wine mono-complete
+      
+      # Install system dependencies
+      RUN apt-get update && apt-get install -y \
+        dpkg \
+        fakeroot \
+        wine \
+        mono-complete \
+        git \
+        python3 \
+        make \
+        g++
+      
+      # Set up working directory
       WORKDIR /builds
+      
+      # Copy package files
       COPY package*.json ./
-      RUN npm install
+      
+      # Install npm dependencies
+      RUN npm install -g electron-builder && \
+          npm install
+      
+      # Pre-cache electron
+      RUN npm install electron
       EOF
     - docker push $CONTAINER_BUILD_IMAGE
   only:
-    - main  # Only run on main branch
+    - main
 
 build:linux:
   stage: build
@@ -51,8 +71,15 @@ build:linux:
     - build:builder-image
   image: $CONTAINER_BUILD_IMAGE
   script:
-    - npm run build
-    - npx electron-builder --linux AppImage --publish never
+    - |
+      echo "Installing dependencies..."
+      npm ci
+      
+      echo "Building application..."
+      npm run build
+      
+      echo "Building Linux package..."
+      npx electron-builder --linux AppImage --publish never
   artifacts:
     paths:
       - dist/**/*
@@ -66,8 +93,15 @@ build:windows:
     - build:builder-image
   image: $CONTAINER_BUILD_IMAGE
   script:
-    - npm run build
-    - npx electron-builder --windows nsis --publish never
+    - |
+      echo "Installing dependencies..."
+      npm ci
+      
+      echo "Building application..."
+      npm run build
+      
+      echo "Building Windows package..."
+      npx electron-builder --windows nsis --publish never
   artifacts:
     paths:
       - dist/**/*
