@@ -81,7 +81,7 @@ build:linux:
     - npm install
   script:
     - npm run build
-    - npx electron-builder --linux AppImage
+    - npx electron-builder --linux AppImage --publish never
   artifacts:
     paths:
       - dist/**/*
@@ -99,7 +99,7 @@ build:windows:
     - npm install
   script:
     - npm run build
-    - npx electron-builder --windows nsis
+    - npx electron-builder --windows nsis --publish never
   artifacts:
     paths:
       - dist/**/*
