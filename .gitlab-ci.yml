@@ -47,8 +47,7 @@ sync-to-github:
           ATTEMPTS=$((ATTEMPTS + 1))
           if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
             echo "No workflows found for commit ${CURRENT_SHA} after ${MAX_ATTEMPTS} attempts"
-            # Don't fail - the release job will still work with Linux/Windows builds
-            exit 0
+            exit 1
           fi
           echo "Attempt $ATTEMPTS of $MAX_ATTEMPTS - waiting 5 seconds..."
           sleep 5
@@ -64,8 +63,7 @@ sync-to-github:
         ATTEMPTS=$((ATTEMPTS + 1))
         if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
           echo "Timeout waiting for GitHub Actions workflow to start"
-          # Don't fail - the release job will still work with Linux/Windows builds
-          exit 0
+          exit 1
         fi
         echo "Attempt $ATTEMPTS of $MAX_ATTEMPTS - waiting 5 seconds..."
         sleep 5
@@ -81,8 +79,7 @@ sync-to-github:
         
         if [ $? -ne 0 ]; then
           echo "Failed to fetch workflow status"
-          # Don't fail - the release job will still work with Linux/Windows builds
-          exit 0
+          exit 1
         fi
         
         STATUS=$(echo "$WORKFLOW_DATA" | jq -r '.status')
@@ -93,28 +90,32 @@ sync-to-github:
         if [ "$STATUS" = "completed" ]; then
           if [ "$CONCLUSION" = "success" ]; then
             echo "GitHub Actions workflow completed successfully!"
+            # Create a file to indicate macOS builds are ready
+            touch .macos_builds_ready
             exit 0
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
-            # Don't fail - the release job will still work with Linux/Windows builds
-            exit 0
+            exit 1
           fi
         elif [ "$STATUS" = "null" ] || [ "$STATUS" = "" ]; then
           echo "Invalid workflow status received"
-          # Don't fail - the release job will still work with Linux/Windows builds
-          exit 0
+          exit 1
         fi
         
         MONITOR_ATTEMPTS=$((MONITOR_ATTEMPTS + 1))
         if [ $MONITOR_ATTEMPTS -eq $MAX_MONITOR_ATTEMPTS ]; then
           echo "Timeout waiting for workflow to complete after 10 minutes"
-          # Don't fail - the release job will still work with Linux/Windows builds
-          exit 0
+          exit 1
         fi
         
         echo "Waiting 30 seconds before next check..."
         sleep 30
       done
+  artifacts:
+    paths:
+      - .macos_builds_ready
+    expire_in: 1 week
+    when: on_success
   only:
     - main
     - tags
@@ -164,8 +165,14 @@ create_release:
     - job: build:windows
       artifacts: true
     - job: sync-to-github
-      optional: true
+      artifacts: true
   script:
+    - |
+      # Verify macOS builds completed successfully
+      if [ ! -f .macos_builds_ready ]; then
+        echo "macOS builds were not successful"
+        exit 1
+      fi
     - apt-get update -y && apt-get install -y curl jq
     - |
       # Get version from package.json
