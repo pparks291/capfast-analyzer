@@ -110,13 +110,17 @@ build:windows:
     - main
 
 sync-to-github:
-  stage: build
+  stage: sync
   image: alpine:latest
   script:
     - apk add --no-cache git curl jq bash
     - git config --global user.email "gitlab-ci@example.com"
     - git config --global user.name "GitLab CI"
+    
+    # Add or update GitHub remote
     - git remote add github "https://${GITHUB_TOKEN}@github.com/pparks291/capfast-analyzer.git" || git remote set-url github "https://${GITHUB_TOKEN}@github.com/pparks291/capfast-analyzer.git"
+    
+    # Fetch and push
     - git fetch origin
     - |
       if [[ -n "$CI_COMMIT_TAG" ]]; then
@@ -124,29 +128,26 @@ sync-to-github:
       else
         git push github HEAD:main
       fi
+    
+    # Wait for GitHub Actions workflow and download artifacts
     - |
       echo "Waiting for GitHub Actions workflow to start..."
       COMMIT_SHA=$(git rev-parse HEAD)
       echo "Looking for workflow triggered by commit: $COMMIT_SHA"
       
-      # Wait for workflow to start and complete
       MAX_ATTEMPTS=24
-      for i in $(seq 1 $MAX_ATTEMPTS); do
-        echo "Attempt $i of $MAX_ATTEMPTS - waiting 5 seconds..."
+      ATTEMPT=1
+      WORKFLOW_ID=""
+      
+      while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+        echo "Attempt $ATTEMPT of $MAX_ATTEMPTS - waiting 5 seconds..."
         sleep 5
         
-        # Get workflow runs for this commit
-        WORKFLOW_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?event=push&head_sha=$COMMIT_SHA")
+        WORKFLOW_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?head_sha=$COMMIT_SHA")
         
         echo "Workflow response:"
         echo "$WORKFLOW_JSON" | jq '.'
-        
-        # Check if we got a valid response
-        if [ "$(echo "$WORKFLOW_JSON" | jq -r '.message')" = "Bad credentials" ]; then
-          echo "Error: Invalid GitHub token"
-          exit 1
-        fi
         
         WORKFLOW_ID=$(echo "$WORKFLOW_JSON" | jq -r '.workflow_runs[0].id')
         
@@ -154,28 +155,25 @@ sync-to-github:
           echo "Found workflow ID: $WORKFLOW_ID for commit $COMMIT_SHA"
           break
         fi
+        
+        ATTEMPT=$((ATTEMPT + 1))
       done
       
-      if [ "$WORKFLOW_ID" = "null" ] || [ -z "$WORKFLOW_ID" ]; then
-        echo "No workflow found after 2 minutes"
+      if [ -z "$WORKFLOW_ID" ] || [ "$WORKFLOW_ID" = "null" ]; then
+        echo "No workflow found after $MAX_ATTEMPTS attempts"
         exit 1
       fi
       
       echo "Monitoring workflow progress..."
-      MAX_MONITOR_ATTEMPTS=20  # 10 minutes maximum
-      ATTEMPT=0
-      while [ $ATTEMPT -lt $MAX_MONITOR_ATTEMPTS ]; do
-        WORKFLOW_DATA=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+      MAX_ATTEMPTS=20
+      ATTEMPT=1
+      
+      while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+        WORKFLOW_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID")
         
         echo "Workflow status response:"
         echo "$WORKFLOW_DATA" | jq '.'
-        
-        # Check if we got a valid response
-        if [ "$(echo "$WORKFLOW_DATA" | jq -r '.message')" = "Bad credentials" ]; then
-          echo "Error: Invalid GitHub token"
-          exit 1
-        fi
         
         STATUS=$(echo "$WORKFLOW_DATA" | jq -r '.status')
         CONCLUSION=$(echo "$WORKFLOW_DATA" | jq -r '.conclusion')
@@ -185,111 +183,70 @@ sync-to-github:
         if [ "$STATUS" = "completed" ]; then
           if [ "$CONCLUSION" = "success" ]; then
             echo "GitHub Actions workflow completed successfully!"
-            
-            # Create artifacts directory
-            mkdir -p dist
-            
-            # Download macOS artifacts
-            echo "Downloading macOS artifacts..."
-            ARTIFACTS_URL="https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/artifacts"
-            ARTIFACTS_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$ARTIFACTS_URL")
-            
-            echo "Available artifacts:"
-            echo "$ARTIFACTS_JSON" | jq '.'
-            
-            # Check if we got a valid response
-            if [ "$(echo "$ARTIFACTS_JSON" | jq -r '.message')" = "Bad credentials" ]; then
-              echo "Error: Invalid GitHub token"
-              exit 1
-            fi
-            
-            # Download each artifact
-            FOUND_ARTIFACTS=0
-            echo "$ARTIFACTS_JSON" | jq -r '.artifacts[] | select(.name | contains("macos")) | .archive_download_url' | while read -r url; do
-              if [ -n "$url" ]; then
-                echo "Downloading from $url"
-                if curl -L -H "Authorization: token ${GITHUB_TOKEN}" "$url" -o artifact.zip; then
-                  unzip -o artifact.zip -d dist/
-                  rm artifact.zip
-                  FOUND_ARTIFACTS=1
-                else
-                  echo "Failed to download artifact from $url"
-                  exit 1
-                fi
-              fi
-            done
-            
-            # List downloaded files
-            echo "Downloaded files in dist directory:"
-            ls -la dist/
-            
-            if [ $FOUND_ARTIFACTS -eq 0 ]; then
-              echo "No artifacts were found or downloaded"
-              exit 1
-            fi
-            
-            # Create flag file to indicate macOS builds are ready
-            touch .macos_builds_ready
             break
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
             echo "Checking workflow logs for errors..."
             
-            # Get workflow logs
-            JOBS_URL="https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/jobs"
-            JOBS_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$JOBS_URL")
+            # Get job details
+            JOBS_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/jobs")
             
             echo "Job details:"
-            echo "$JOBS_JSON" | jq '.'
+            echo "$JOBS_DATA" | jq '.'
             
-            # Get detailed logs for each job
-            echo "$JOBS_JSON" | jq -r '.jobs[] | .id' | while read -r job_id; do
-              echo "Getting logs for job $job_id..."
-              JOB_DETAILS=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-                "https://api.github.com/repos/pparks291/capfast-analyzer/actions/jobs/$job_id")
-              
-              echo "Job details:"
-              echo "$JOB_DETAILS" | jq '.'
-              
-              # Get step details
-              echo "Step details:"
-              echo "$JOB_DETAILS" | jq -r '.steps[] | {
-                name: .name,
-                status: .status,
-                conclusion: .conclusion,
-                started_at: .started_at,
-                completed_at: .completed_at
-              }'
-              
-              # Get logs URL
-              LOGS_URL=$(echo "$JOB_DETAILS" | jq -r '.logs_url')
-              if [ -n "$LOGS_URL" ] && [ "$LOGS_URL" != "null" ]; then
-                echo "Fetching logs from $LOGS_URL..."
-                curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$LOGS_URL" || echo "Failed to fetch logs"
-              fi
+            # For each job, get step details
+            echo "Step details:"
+            echo "$JOBS_DATA" | jq -c '.jobs[]' | while read -r job; do
+              echo "$job" | jq '.'
             done
             
             exit 1
           fi
         fi
         
-        ATTEMPT=$((ATTEMPT + 1))
-        echo "Waiting 30 seconds before next check (attempt $ATTEMPT of $MAX_MONITOR_ATTEMPTS)..."
+        echo "Waiting 30 seconds before next check (attempt $ATTEMPT of $MAX_ATTEMPTS)..."
         sleep 30
+        ATTEMPT=$((ATTEMPT + 1))
       done
       
-      if [ $ATTEMPT -eq $MAX_MONITOR_ATTEMPTS ]; then
-        echo "Timed out waiting for workflow to complete"
+      if [ "$STATUS" != "completed" ] || [ "$CONCLUSION" != "success" ]; then
+        echo "Workflow did not complete successfully within timeout"
         exit 1
       fi
+      
+      # Download macOS artifacts
+      echo "Downloading macOS artifacts..."
+      mkdir -p dist
+      
+      # Get list of artifacts
+      ARTIFACTS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+        "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/artifacts")
+      
+      echo "Available artifacts:"
+      echo "$ARTIFACTS" | jq '.'
+      
+      # Download each artifact
+      echo "$ARTIFACTS" | jq -r '.artifacts[] | .archive_download_url' | while read -r url; do
+        echo "Downloading from $url"
+        curl -L -H "Authorization: token $GITHUB_TOKEN" "$url" -o artifact.zip
+        unzip -o artifact.zip -d dist/
+        rm artifact.zip
+      done
+      
+      echo "Downloaded files in dist directory:"
+      ls -la dist/
+      
+      # Create flag file to indicate macOS builds are ready
+      touch .macos-builds-ready
   artifacts:
     paths:
       - dist/*.dmg
-      - .macos_builds_ready
-    expire_in: 1 week
-  only:
-    - main
-    - tags
+      - .macos-builds-ready
+    expire_in: 1 day
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 create_release:
   stage: release
@@ -304,7 +261,7 @@ create_release:
   script:
     - |
       # Verify macOS builds completed successfully
-      if [ ! -f .macos_builds_ready ]; then
+      if [ ! -f .macos-builds-ready ]; then
         echo "macOS builds were not successful"
         exit 1
       fi
