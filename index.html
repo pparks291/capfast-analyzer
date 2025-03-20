@@ -288,7 +288,10 @@
       
       <div class="form-group">
         <label for="signal-select">Select Signal: </label>
-        <select id="signal-select"></select>
+        <div style="display: flex; width: 100%; max-width: 600px; gap: 8px;">
+          <input type="text" id="signal-search" placeholder="Search by IP address..." style="flex-grow: 1;">
+          <select id="signal-select" style="flex-grow: 2;"></select>
+        </div>
       </div>
       
       <div class="tabs">
@@ -320,6 +323,12 @@
           <div class="form-group">
             <button id="refresh-chart-btn">Refresh Chart</button>
             <button id="reset-zoom-btn">Reset Zoom</button>
+            <div style="display: flex; gap: 5px; margin-left: 10px;">
+              <button id="zoom-x-in-btn" title="Zoom in X axis">X+</button>
+              <button id="zoom-x-out-btn" title="Zoom out X axis">X-</button>
+              <button id="zoom-y-in-btn" title="Zoom in Y axis">Y+</button>
+              <button id="zoom-y-out-btn" title="Zoom out Y axis">Y-</button>
+            </div>
           </div>
         </div>
         <div class="chart-container">
@@ -331,6 +340,12 @@
         <div class="chart-options">
           <div class="form-group">
             <button id="reset-dist-zoom-btn">Reset Zoom</button>
+            <div style="display: flex; gap: 5px; margin-left: 10px;">
+              <button id="dist-zoom-x-in-btn" title="Zoom in X axis">X+</button>
+              <button id="dist-zoom-x-out-btn" title="Zoom out X axis">X-</button>
+              <button id="dist-zoom-y-in-btn" title="Zoom in Y axis">Y+</button>
+              <button id="dist-zoom-y-out-btn" title="Zoom out Y axis">Y-</button>
+            </div>
           </div>
         </div>
         <div class="chart-container">
@@ -535,6 +550,38 @@
       updateCharts();
     });
     
+    // Handle signal search
+    const signalSearch = document.getElementById('signal-search');
+    signalSearch.addEventListener('input', () => {
+      const searchTerm = signalSearch.value.toLowerCase();
+      
+      // Get all options
+      const options = Array.from(signalSelect.options);
+      let matchFound = false;
+      
+      // For each option
+      options.forEach(option => {
+        // Get the text and check if it contains the search term
+        const text = option.text.toLowerCase();
+        const matches = text.includes(searchTerm);
+        
+        // Show/hide option based on match
+        option.style.display = matches ? '' : 'none';
+        
+        // Track if we found any matches
+        if (matches && !matchFound) {
+          matchFound = true;
+          // Select first match
+          option.selected = true;
+        }
+      });
+      
+      // If search term is not empty and we found matches, update charts
+      if (searchTerm && matchFound) {
+        updateCharts();
+      }
+    });
+    
     // Handle x-axis format change
     document.getElementById('x-axis-format').addEventListener('change', () => {
       updateCharts();
@@ -543,6 +590,56 @@
     // Handle y-axis scale change
     document.getElementById('y-axis-scale').addEventListener('change', () => {
       updateCharts();
+    });
+    
+    // Axis specific zoom for time series chart
+    document.getElementById('zoom-x-in-btn').addEventListener('click', () => {
+      if (timeSeriesChart) {
+        timeSeriesChart.zoom(1.2, 1, 'x');
+      }
+    });
+    
+    document.getElementById('zoom-x-out-btn').addEventListener('click', () => {
+      if (timeSeriesChart) {
+        timeSeriesChart.zoom(0.8, 1, 'x');
+      }
+    });
+    
+    document.getElementById('zoom-y-in-btn').addEventListener('click', () => {
+      if (timeSeriesChart) {
+        timeSeriesChart.zoom(1, 1.2, 'y');
+      }
+    });
+    
+    document.getElementById('zoom-y-out-btn').addEventListener('click', () => {
+      if (timeSeriesChart) {
+        timeSeriesChart.zoom(1, 0.8, 'y');
+      }
+    });
+    
+    // Axis specific zoom for distribution chart
+    document.getElementById('dist-zoom-x-in-btn').addEventListener('click', () => {
+      if (distributionChart) {
+        distributionChart.zoom(1.2, 1, 'x');
+      }
+    });
+    
+    document.getElementById('dist-zoom-x-out-btn').addEventListener('click', () => {
+      if (distributionChart) {
+        distributionChart.zoom(0.8, 1, 'x');
+      }
+    });
+    
+    document.getElementById('dist-zoom-y-in-btn').addEventListener('click', () => {
+      if (distributionChart) {
+        distributionChart.zoom(1, 1.2, 'y');
+      }
+    });
+    
+    document.getElementById('dist-zoom-y-out-btn').addEventListener('click', () => {
+      if (distributionChart) {
+        distributionChart.zoom(1, 0.8, 'y');
+      }
     });
     
     // Handle refresh chart button click
@@ -970,6 +1067,7 @@
               zoom: {
                 wheel: {
                   enabled: true,
+                  speed: 0.1, // Slower zoom speed for better control
                 },
                 pinch: {
                   enabled: true
@@ -980,6 +1078,7 @@
                   backgroundColor: 'rgba(66, 133, 244, 0.1)',
                   borderColor: 'rgba(66, 133, 244, 0.5)'
                 },
+                sensitivity: 3, // Lower sensitivity for better control
                 onZoom: function() {
                   // This will load more detailed data when zoomed in - using existing datasets
                   const chart = this.chart;
@@ -1009,11 +1108,15 @@
       const bins = signalData.histogram.bins.map(bin => scaleLatency(bin, yAxisScale));
       const counts = signalData.histogram.counts;
       
+      // Format bin labels with proper precision based on scale
+      const precision = yAxisScale === 'ns' ? 0 : (yAxisScale === 'us' ? 2 : 3);
+      const formattedLabels = bins.map(bin => bin.toFixed(precision));
+      
       // Create chart configuration
       const config = {
         type: 'bar',
         data: {
-          labels: bins.map(bin => bin.toFixed(2)),
+          labels: formattedLabels,
           datasets: [{
             label: 'Frequency',
             data: counts,
@@ -1030,6 +1133,12 @@
               title: {
                 display: true,
                 text: getYAxisLabel(yAxisScale)
+              },
+              ticks: {
+                callback: function(value, index) {
+                  // Only show a subset of labels for readability
+                  return index % Math.ceil(bins.length / 20) === 0 ? formattedLabels[index] : '';
+                }
               }
             },
             y: {
@@ -1040,6 +1149,14 @@
             }
           },
           plugins: {
+            tooltip: {
+              callbacks: {
+                title: function(context) {
+                  // Get the bin value from our formatted labels
+                  return `${formattedLabels[context[0].dataIndex]} ${getUnitLabel(yAxisScale)}`;
+                }
+              }
+            },
             zoom: {
               pan: {
                 enabled: true,
@@ -1048,11 +1165,13 @@
               zoom: {
                 wheel: {
                   enabled: true,
+                  speed: 0.1, // Slower zoom speed for better control
                 },
                 pinch: {
                   enabled: true
                 },
-                mode: 'xy'
+                mode: 'xy',
+                sensitivity: 3 // Lower sensitivity for better control
               }
             }
           }
