@@ -7,6 +7,75 @@ const os = require('os');
 const { Worker } = require('worker_threads');
 const v8 = require('v8');
 
+// Memory monitoring utilities
+const memoryMonitor = {
+  // Get current memory usage stats
+  getMemoryUsage: () => {
+    const heapStats = v8.getHeapStatistics();
+    const systemMemory = {
+      total: os.totalmem(),
+      free: os.freemem(),
+      used: os.totalmem() - os.freemem()
+    };
+    
+    // Calculate memory usage percentages
+    const heapUsedPercent = (heapStats.used_heap_size / heapStats.heap_size_limit) * 100;
+    const systemUsedPercent = ((systemMemory.total - systemMemory.free) / systemMemory.total) * 100;
+    
+    return {
+      heap: {
+        used: heapStats.used_heap_size,
+        total: heapStats.heap_size_limit,
+        usedPercent: heapUsedPercent
+      },
+      system: {
+        used: systemMemory.used,
+        free: systemMemory.free,
+        total: systemMemory.total,
+        usedPercent: systemUsedPercent
+      }
+    };
+  },
+  
+  // Check if memory usage is approaching limits
+  isMemoryConstrained: () => {
+    const usage = memoryMonitor.getMemoryUsage();
+    
+    // Consider memory constrained if heap is > 70% used or system memory > 85% used
+    return (usage.heap.usedPercent > 70 || usage.system.usedPercent > 85);
+  },
+  
+  // Calculate optimal batch size based on memory conditions
+  getOptimalBatchSize: (currentBatchSize, fileSize) => {
+    const usage = memoryMonitor.getMemoryUsage();
+    
+    // Start with current batch size
+    let newBatchSize = currentBatchSize;
+    
+    // If memory usage is high, reduce batch size
+    if (usage.heap.usedPercent > 80) {
+      newBatchSize = Math.max(100, Math.floor(currentBatchSize * 0.5));
+    } else if (usage.heap.usedPercent > 60) {
+      newBatchSize = Math.max(200, Math.floor(currentBatchSize * 0.7));
+    } else if (usage.heap.usedPercent < 30 && fileSize > 1024 * 1024 * 100) {
+      // If memory usage is low and file is large, increase batch size
+      newBatchSize = Math.min(10000, Math.floor(currentBatchSize * 1.5));
+    }
+    
+    return newBatchSize;
+  },
+  
+  // Log memory statistics
+  logMemoryStatus: (operationName) => {
+    const usage = memoryMonitor.getMemoryUsage();
+    console.log(`Memory status during ${operationName}:`);
+    console.log(`  Heap: ${(usage.heap.used / 1024 / 1024).toFixed(2)}MB / ${(usage.heap.total / 1024 / 1024).toFixed(2)}MB (${usage.heap.usedPercent.toFixed(1)}%)`);
+    console.log(`  System: ${(usage.system.used / 1024 / 1024 / 1024).toFixed(2)}GB / ${(usage.system.total / 1024 / 1024 / 1024).toFixed(2)}GB (${usage.system.usedPercent.toFixed(1)}%)`);
+    
+    return usage;
+  }
+};
+
 // Set memory limits before app is ready
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('js-flags', '--expose-gc');
@@ -208,12 +277,19 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
     
+    // Initial memory status
+    const initialMemory = memoryMonitor.logMemoryStatus('analysis start');
+    
     // Send initial status message
     updateAnalysisStatus({
       status: 'starting',
       message: 'Beginning file analysis...',
       fileSize: fileSize,
-      progress: 0
+      progress: 0,
+      memory: {
+        heap: initialMemory.heap.usedPercent.toFixed(1) + '%',
+        system: initialMemory.system.usedPercent.toFixed(1) + '%'
+      }
     });
     
     // Open the file for reading
@@ -243,6 +319,18 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
       };
     }
     
+    // Estimate file scale and adjust strategy for extremely large files
+    const isVeryLargeFile = fileSize > 1024 * 1024 * 1024; // > 1GB
+    const isExtremelyLargeFile = fileSize > 5 * 1024 * 1024 * 1024; // > 5GB
+    
+    if (isExtremelyLargeFile) {
+      updateAnalysisStatus({
+        status: 'large-file',
+        message: `Extremely large file detected (${(fileSize / (1024 * 1024 * 1024)).toFixed(2)} GB). Optimizing for memory efficiency.`,
+        progress: 0
+      });
+    }
+    
     // PASS 1: Identify all signals using batch processing
     updateAnalysisStatus({
       status: 'pass1',
@@ -262,13 +350,13 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
     });
     
     // Filter out signals with low counts to reduce memory usage
-    const MIN_SIGNAL_COUNT = 10;
+    const MIN_SIGNAL_COUNT = isExtremelyLargeFile ? 50 : (isVeryLargeFile ? 25 : 10);
     const filteredSignals = Object.entries(signalCounts)
       .filter(([_, count]) => count >= MIN_SIGNAL_COUNT)
       .map(([signal, _]) => signal);
     
     // If too many signals, only take the top N to prevent memory overload
-    const MAX_SIGNALS = 1000;
+    const MAX_SIGNALS = isExtremelyLargeFile ? 100 : (isVeryLargeFile ? 250 : 1000);
     let allSignals = filteredSignals;
     
     if (filteredSignals.length > MAX_SIGNALS) {
@@ -287,11 +375,18 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
       });
     }
     
+    // Check memory status before second pass
+    const midwayMemory = memoryMonitor.logMemoryStatus('before second pass');
+    
     // PASS 2: Collect detailed data for signals in batches
     updateAnalysisStatus({
       status: 'pass2',
       message: `Pass 2: Collecting metrics for ${allSignals.length} signals...`,
-      progress: 0
+      progress: 0,
+      memory: {
+        heap: midwayMemory.heap.usedPercent.toFixed(1) + '%',
+        system: midwayMemory.system.usedPercent.toFixed(1) + '%'
+      }
     });
     
     const signalData = await collectSignalMetrics(fd, fileSize, allSignals, (progress, packetCount) => {
@@ -307,11 +402,18 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
     // Close the file
     fs.closeSync(fd);
     
+    // Check memory before processing phase
+    const preProcessMemory = memoryMonitor.logMemoryStatus('before results processing');
+    
     // Process the signal data to calculate metrics
     updateAnalysisStatus({
       status: 'processing',
       message: 'Calculating metrics using multiple CPU cores...',
-      progress: 100
+      progress: 100,
+      memory: {
+        heap: preProcessMemory.heap.usedPercent.toFixed(1) + '%',
+        system: preProcessMemory.system.usedPercent.toFixed(1) + '%'
+      }
     });
     
     // Use multiple cores for processing the signals
@@ -327,6 +429,9 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
       global.gc();
     }
     
+    // Final memory check
+    const finalMemory = memoryMonitor.logMemoryStatus('analysis complete');
+    
     // Add source file information to results for reference
     results._fileInfo = {
       path: filePath,
@@ -336,6 +441,16 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
       signalCount: {
         total: Object.keys(signalCounts).length,
         analyzed: allSignals.length
+      },
+      processingStats: {
+        initialMemory: initialMemory.heap.usedPercent.toFixed(1) + '%',
+        peakMemory: Math.max(
+          initialMemory.heap.usedPercent,
+          midwayMemory.heap.usedPercent,
+          preProcessMemory.heap.usedPercent,
+          finalMemory.heap.usedPercent
+        ).toFixed(1) + '%',
+        finalMemory: finalMemory.heap.usedPercent.toFixed(1) + '%'
       }
     };
     
@@ -344,37 +459,56 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
       status: 'complete',
       message: 'Analysis complete',
       signalCount: Object.keys(results).length - 1, // Subtract 1 for the _fileInfo key
-      progress: 100
+      progress: 100,
+      memory: {
+        heap: finalMemory.heap.usedPercent.toFixed(1) + '%',
+        system: finalMemory.system.usedPercent.toFixed(1) + '%'
+      }
     });
     
     return results;
     
   } catch (error) {
+    // Get current memory state
+    const errorMemory = memoryMonitor.logMemoryStatus('analysis error');
+    
     updateAnalysisStatus({
       status: 'error',
       message: `Error: ${error.message}`,
-      progress: 0
+      progress: 0,
+      memory: {
+        heap: errorMemory.heap.usedPercent.toFixed(1) + '%',
+        system: errorMemory.system.usedPercent.toFixed(1) + '%'
+      }
     });
     
     return { error: error.message, stack: error.stack };
   }
 });
 
-// First pass: count occurrences of each signal to identify all signals - USING BATCHES
+// First pass: count occurrences of each signal to identify all signals - USING ADAPTIVE BATCHING
 async function identifyActiveSignals(fd, fileSize, progressCallback) {
   const signalCounts = {};
   let packetCount = 0;
   let processedBytes = 24; // Start after global header
   let currentPosition = 24;
   let lastProgressReport = 0;
+  let lastPacketInclLen = 0; // Store the last valid packet length
   
-  // Batch processing configuration
-  const BATCH_SIZE = 1000; // Process 1000 packets per batch
+  // Batch processing configuration - starts with default but will adapt
+  let BATCH_SIZE = 1000; // Initial batch size
   const packetHeaderBuffer = Buffer.alloc(16);
+  
+  // Log initial memory state
+  memoryMonitor.logMemoryStatus('starting signal identification');
   
   // Process packets in batches until the end of file
   while (processedBytes < fileSize) {
+    // Check memory conditions and adjust batch size
+    BATCH_SIZE = memoryMonitor.getOptimalBatchSize(BATCH_SIZE, fileSize);
+    
     let batchPackets = 0;
+    const batchStartTime = Date.now();
     
     // Process a batch of packets
     while (batchPackets < BATCH_SIZE && processedBytes < fileSize) {
@@ -398,6 +532,9 @@ async function identifyActiveSignals(fd, fileSize, progressCallback) {
           processedBytes += 20;
           continue;
         }
+        
+        // Store the last valid packet length
+        lastPacketInclLen = packetHeader.incl_len;
         
         // Read packet data
         const packetDataBuffer = Buffer.alloc(packetHeader.incl_len);
@@ -421,6 +558,7 @@ async function identifyActiveSignals(fd, fileSize, progressCallback) {
         // On error, try to skip ahead and resync
         currentPosition += 1024;
         processedBytes += 1024;
+        console.error(`Error processing packet: ${err.message}`);
         break; // Exit batch on error
       }
     }
@@ -430,23 +568,56 @@ async function identifyActiveSignals(fd, fileSize, progressCallback) {
     if (progressPercent !== lastProgressReport) {
       progressCallback(progressPercent, packetCount, Object.keys(signalCounts).length);
       lastProgressReport = progressPercent;
+      
+      // Log memory status every 10% progress
+      if (progressPercent % 10 === 0) {
+        const memUsage = memoryMonitor.logMemoryStatus(`signal identification (${progressPercent}%)`);
+        
+        // Report memory status to UI
+        updateAnalysisStatus({
+          status: 'memory',
+          message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
+          progress: progressPercent
+        });
+      }
+    }
+    
+    // Calculate batch processing time and throughput
+    const batchTime = Date.now() - batchStartTime;
+    const batchSizeMB = batchPackets > 0 ? (processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen))) / (1024 * 1024) : 0;
+    const throughputMBps = batchTime > 0 ? (batchSizeMB / (batchTime / 1000)).toFixed(2) : 0;
+    
+    if (batchPackets > 0) {
+      console.log(`Batch processed: ${batchPackets} packets, ${throughputMBps} MB/s, batch size: ${BATCH_SIZE}`);
     }
     
     // Allow event loop to process and GC to run
     await new Promise(resolve => setTimeout(resolve, 0));
-    if (global.gc) global.gc();
+    if (global.gc) {
+      global.gc();
+      // Check if memory is still constrained after GC
+      if (memoryMonitor.isMemoryConstrained()) {
+        // Further reduce batch size if still constrained after GC
+        BATCH_SIZE = Math.max(50, Math.floor(BATCH_SIZE * 0.5));
+        console.log(`Memory still constrained after GC, reducing batch size to ${BATCH_SIZE}`);
+      }
+    }
   }
+  
+  // Final memory report
+  memoryMonitor.logMemoryStatus('completed signal identification');
   
   return signalCounts;
 }
 
-// Second pass: collect detailed metrics for all signals - USING BATCHES
+// Second pass: collect detailed metrics for all signals - USING ADAPTIVE BATCHING
 async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallback) {
   const signalData = {};
   let packetCount = 0;
   let processedBytes = 24; // Start after global header
   let currentPosition = 24;
   let lastProgressReport = 0;
+  let lastPacketInclLen = 0; // Store the last valid packet length
   
   // Initialize data structure for each selected signal
   selectedSignals.forEach(signalId => {
@@ -456,13 +627,26 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
   // Build lookup set for faster checking
   const selectedSignalsSet = new Set(selectedSignals);
   
-  // Batch processing configuration
-  const BATCH_SIZE = 1000; // Process 1000 packets per batch
+  // Batch processing configuration - starts with default but will adapt
+  let BATCH_SIZE = 1000; // Initial batch size
   const packetHeaderBuffer = Buffer.alloc(16);
+  
+  // Log initial memory state
+  memoryMonitor.logMemoryStatus('starting metrics collection');
+  
+  // Enhance progress reporting with time estimation
+  const startTime = Date.now();
+  let lastBytesProcessed = processedBytes;
+  let lastTimeCheck = startTime;
+  let estimatedTimeRemaining = null;
   
   // Process packets in batches until the end of file
   while (processedBytes < fileSize) {
+    // Check memory conditions and adjust batch size
+    BATCH_SIZE = memoryMonitor.getOptimalBatchSize(BATCH_SIZE, fileSize);
+    
     let batchPackets = 0;
+    const batchStartTime = Date.now();
     
     // Process a batch of packets
     while (batchPackets < BATCH_SIZE && processedBytes < fileSize) {
@@ -486,29 +670,49 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
           processedBytes += 20;
           continue;
         }
+
+        // Store the last valid packet length
+        lastPacketInclLen = packetHeader.incl_len;
         
-        // Extract timestamp
+        // Calculate timestamp
         const timestamp = packetHeader.ts_sec + (packetHeader.ts_usec / 1000000);
         
-        // Read packet data
-        const packetDataBuffer = Buffer.alloc(packetHeader.incl_len);
-        fs.readSync(fd, packetDataBuffer, 0, packetHeader.incl_len, currentPosition);
+        // For efficiency, first check if packet has a signal we care about
+        let hasRelevantSignal = false;
+        if (packetHeader.incl_len > 34) {
+          // Peek at the header to see if it's an IP packet we might care about
+          const headerBuffer = Buffer.alloc(Math.min(34, packetHeader.incl_len));
+          fs.readSync(fd, headerBuffer, 0, Math.min(34, packetHeader.incl_len), currentPosition);
+          
+          // Quick check for IP packets
+          const etherType = (headerBuffer[12] << 8) | headerBuffer[13];
+          hasRelevantSignal = (etherType === 0x0800);
+        }
         
-        // Identify signals and collect metrics only for selected signals
-        const signalIds = identifySignals(packetHeader, packetDataBuffer);
-        
-        // Add data point for each signal that's in our selected list
-        signalIds.forEach(signalId => {
-          if (selectedSignalsSet.has(signalId)) {
-            const latencyMetric = calculateLatencyMetric(packetHeader, packetDataBuffer, signalId);
-            
-            // Add data point
-            signalData[signalId].push({
-              timestamp,
-              latency: latencyMetric
-            });
+        if (hasRelevantSignal) {
+          // Read full packet data
+          const packetDataBuffer = Buffer.alloc(packetHeader.incl_len);
+          fs.readSync(fd, packetDataBuffer, 0, packetHeader.incl_len, currentPosition);
+          
+          // Identify signal
+          const signalIds = identifySignals(packetHeader, packetDataBuffer);
+          
+          // Check if packet belongs to a selected signal
+          for (const signalId of signalIds) {
+            if (selectedSignalsSet.has(signalId)) {
+              // Calculate latency metric for this signal
+              const latencyMetric = calculateLatencyMetric(packetHeader, packetDataBuffer, signalId);
+              
+              if (latencyMetric !== null) {
+                // Store the data point with timestamp
+                signalData[signalId].push({
+                  timestamp: timestamp,
+                  latency: latencyMetric
+                });
+              }
+            }
           }
-        });
+        }
         
         // Update counters
         packetCount++;
@@ -518,23 +722,133 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
         
       } catch (err) {
         // On error, try to skip ahead and resync
+        console.error(`Error processing packet in metrics collection: ${err.message}`);
         currentPosition += 1024;
         processedBytes += 1024;
         break; // Exit batch on error
       }
     }
     
-    // After each batch, report progress and allow GC to run
+    // After each batch, report progress
     const progressPercent = Math.floor((processedBytes / fileSize) * 100);
     if (progressPercent !== lastProgressReport) {
-      progressCallback(progressPercent, packetCount);
+      // Calculate processing speed and estimate time remaining
+      const now = Date.now();
+      const timeElapsed = now - lastTimeCheck;
+      
+      if (timeElapsed > 1000) { // Update once per second
+        const bytesProcessed = processedBytes - lastBytesProcessed;
+        const bytesPerSecond = bytesProcessed / (timeElapsed / 1000);
+        const remainingBytes = fileSize - processedBytes;
+        estimatedTimeRemaining = remainingBytes / bytesPerSecond;
+        
+        lastBytesProcessed = processedBytes;
+        lastTimeCheck = now;
+      }
+      
+      // Report progress with metrics count
+      let totalDataPoints = 0;
+      for (const signalId of selectedSignals) {
+        totalDataPoints += signalData[signalId].length;
+      }
+      
+      progressCallback(progressPercent, totalDataPoints, estimatedTimeRemaining);
       lastProgressReport = progressPercent;
+      
+      // Log memory status every 10% progress
+      if (progressPercent % 10 === 0) {
+        const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
+        
+        // If memory usage is getting high, apply emergency measures
+        if (memUsage.heap.usedPercent > 85) {
+          // Emergency: drop some data points to reduce memory pressure
+          const dropFactor = memUsage.heap.usedPercent > 95 ? 0.5 : 0.75;
+          
+          // Reduce the size of each signal's dataset
+          for (const signalId of selectedSignals) {
+            if (signalData[signalId].length > 1000) {
+              const newLength = Math.floor(signalData[signalId].length * dropFactor);
+              signalData[signalId] = reduceDataPoints(signalData[signalId], newLength);
+              
+              console.log(`Emergency memory management: reduced signal ${signalId} from ${signalData[signalId].length} to ${newLength} points`);
+            }
+          }
+          
+          // Force garbage collection
+          if (global.gc) {
+            global.gc();
+          }
+          
+          // Report memory emergency action to UI
+          updateAnalysisStatus({
+            status: 'memory-emergency',
+            message: `Memory usage critical (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing data resolution.`,
+            progress: progressPercent
+          });
+        } else {
+          // Normal memory status report
+          updateAnalysisStatus({
+            status: 'memory',
+            message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
+            progress: progressPercent
+          });
+        }
+      }
+    }
+    
+    // Calculate batch processing time and throughput
+    const batchTime = Date.now() - batchStartTime;
+    const batchSizeMB = batchPackets > 0 ? (processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen))) / (1024 * 1024) : 0;
+    const throughputMBps = batchTime > 0 ? (batchSizeMB / (batchTime / 1000)).toFixed(2) : 0;
+    
+    if (batchPackets > 0 && (processedBytes % (10 * 1024 * 1024) < BATCH_SIZE * (16 + 100))) { // Log every ~10MB
+      console.log(`Metrics batch: ${batchPackets} packets, ${throughputMBps} MB/s, batch size: ${BATCH_SIZE}`);
     }
     
     // Allow event loop to process and GC to run
     await new Promise(resolve => setTimeout(resolve, 0));
-    if (global.gc) global.gc();
+    if (global.gc) {
+      global.gc();
+      
+      // If memory usage is still high after GC, take more aggressive action
+      if (memoryMonitor.isMemoryConstrained()) {
+        // 1. Reduce batch size more aggressively
+        BATCH_SIZE = Math.max(50, Math.floor(BATCH_SIZE * 0.4));
+        
+        // 2. Emergency measure: Trim data arrays if they're getting too large
+        const dataPoints = Object.values(signalData).reduce((total, arr) => total + arr.length, 0);
+        if (dataPoints > 5000000) { // If more than 5 million data points
+          console.log('Emergency memory management: Trimming data arrays');
+          
+          // Trim arrays to a more manageable size by keeping every Nth point
+          const targetSize = 2000000; // Target 2 million points
+          const reductionFactor = Math.ceil(dataPoints / targetSize);
+          
+          Object.keys(signalData).forEach(signalId => {
+            if (signalData[signalId].length > 1000) { // Don't trim small arrays
+              const reducedArray = [];
+              for (let i = 0; i < signalData[signalId].length; i += reductionFactor) {
+                reducedArray.push(signalData[signalId][i]);
+              }
+              signalData[signalId] = reducedArray;
+            }
+          });
+          
+          // Log memory after emergency reduction
+          const postMemory = memoryMonitor.logMemoryStatus('after emergency data reduction');
+          
+          updateAnalysisStatus({
+            status: 'memory-emergency',
+            message: `Emergency memory management activated: reduced to ${targetSize.toLocaleString()} data points`,
+            progress: progressPercent
+          });
+        }
+      }
+    }
   }
+  
+  // Final memory report
+  memoryMonitor.logMemoryStatus('completed metrics collection');
   
   return signalData;
 }
