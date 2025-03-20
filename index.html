@@ -1366,6 +1366,7 @@
                 }
               },
               time: xAxisType === 'time' ? {
+                parser: 'YYYY-MM-DD HH:mm:ss.SSS',
                 unit: 'minute',
                 displayFormats: {
                   millisecond: 'HH:mm:ss.SSS',
@@ -1376,13 +1377,31 @@
                 tooltipFormat: 'HH:mm:ss.SSS'
               } : undefined,
               ticks: {
-                // Ensure time ticks display properly
+                // Fix time display by ensuring proper date object conversion
                 callback: function(value, index, values) {
                   if (xAxisType === 'time') {
+                    // Validate that we're dealing with proper Date objects
                     const date = new Date(value);
-                    // Format depends on the zoom level/tick density
-                    const format = values.length > 10 ? 'HH:mm:ss' : 'HH:mm:ss.SSS';
-                    return new Date(value).toLocaleTimeString();
+                    if (isNaN(date.getTime())) {
+                      console.error('Invalid date value:', value);
+                      return 'Invalid';
+                    }
+                    
+                    // Return formatted time string based on zoom level
+                    if (values.length > 15) {
+                      return date.toLocaleTimeString('en-US', { 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        hour12: false
+                      });
+                    } else {
+                      return date.toLocaleTimeString('en-US', { 
+                        hour: '2-digit', 
+                        minute: '2-digit', 
+                        second: '2-digit',
+                        hour12: false
+                      });
+                    }
                   }
                   return value;
                 }
