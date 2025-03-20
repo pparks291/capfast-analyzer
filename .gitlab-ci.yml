@@ -138,6 +138,9 @@ sync-to-github:
         WORKFLOW_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
           "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?event=push&head_sha=$COMMIT_SHA")
         
+        echo "Workflow response:"
+        echo "$WORKFLOW_JSON" | jq '.'
+        
         WORKFLOW_ID=$(echo "$WORKFLOW_JSON" | jq -r '.workflow_runs[0].id')
         
         if [ "$WORKFLOW_ID" != "null" ] && [ -n "$WORKFLOW_ID" ]; then
@@ -153,12 +156,14 @@ sync-to-github:
       
       echo "Monitoring workflow progress..."
       while true; do
-        WORKFLOW_STATUS=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID" | \
-          jq -r '[.status, .conclusion] | @tsv')
+        WORKFLOW_DATA=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID")
         
-        STATUS=$(echo "$WORKFLOW_STATUS" | cut -f1)
-        CONCLUSION=$(echo "$WORKFLOW_STATUS" | cut -f2)
+        echo "Workflow status response:"
+        echo "$WORKFLOW_DATA" | jq '.'
+        
+        STATUS=$(echo "$WORKFLOW_DATA" | jq -r '.status')
+        CONCLUSION=$(echo "$WORKFLOW_DATA" | jq -r '.conclusion')
         
         echo "Current status: $STATUS (conclusion: $CONCLUSION)"
         
@@ -173,6 +178,9 @@ sync-to-github:
             echo "Downloading macOS artifacts..."
             ARTIFACTS_URL="https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/artifacts"
             ARTIFACTS_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$ARTIFACTS_URL")
+            
+            echo "Available artifacts:"
+            echo "$ARTIFACTS_JSON" | jq '.'
             
             # Download each artifact
             echo "$ARTIFACTS_JSON" | jq -r '.artifacts[] | select(.name | contains("macos")) | .archive_download_url' | while read -r url; do
@@ -193,6 +201,15 @@ sync-to-github:
             break
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
+            echo "Checking workflow logs for errors..."
+            
+            # Get workflow logs
+            JOBS_URL="https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/jobs"
+            JOBS_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$JOBS_URL")
+            
+            echo "Job details:"
+            echo "$JOBS_JSON" | jq '.'
+            
             exit 1
           fi
         fi
