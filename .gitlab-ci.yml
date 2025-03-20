@@ -1,7 +1,6 @@
 stages:
   - prepare
-  - build
-  - sync
+  - build_and_sync
   - release
 
 variables:
@@ -75,7 +74,7 @@ build:builder-image:
   <<: *job_template
 
 build:linux:
-  stage: build
+  stage: build_and_sync
   needs:
     - build:builder-image
   image: $CONTAINER_BUILD_IMAGE
@@ -96,7 +95,7 @@ build:linux:
   <<: *job_template
 
 build:windows:
-  stage: build
+  stage: build_and_sync
   needs:
     - build:builder-image
   image: $CONTAINER_BUILD_IMAGE
@@ -117,7 +116,9 @@ build:windows:
   <<: *job_template
 
 sync-to-github:
-  stage: sync
+  stage: build_and_sync
+  needs:
+    - build:builder-image
   image: alpine:latest
   script:
     - apk add --no-cache git curl jq bash
