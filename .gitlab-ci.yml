@@ -1,6 +1,7 @@
 stages:
   - prepare
   - build
+  - sync
   - release
 
 variables:
@@ -14,6 +15,14 @@ cache:
   paths:
     - node_modules/
 
+.job_template: &job_template
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: always
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always
+    - when: never
+
 .docker-login: &docker-login
   before_script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
@@ -23,7 +32,8 @@ build:builder-image:
   image: docker:latest
   services:
     - docker:dind
-  <<: *docker-login
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - |
       # Try to pull existing image first
@@ -62,8 +72,7 @@ build:builder-image:
       RUN npm install electron
       EOF
     - docker push $CONTAINER_BUILD_IMAGE
-  only:
-    - main
+  <<: *job_template
 
 build:linux:
   stage: build
@@ -84,8 +93,7 @@ build:linux:
     paths:
       - dist/**/*
     expire_in: 1 week
-  only:
-    - main
+  <<: *job_template
 
 build:windows:
   stage: build
@@ -106,8 +114,7 @@ build:windows:
     paths:
       - dist/**/*
     expire_in: 1 week
-  only:
-    - main
+  <<: *job_template
 
 sync-to-github:
   stage: sync
@@ -186,21 +193,6 @@ sync-to-github:
             break
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
-            echo "Checking workflow logs for errors..."
-            
-            # Get job details
-            JOBS_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/jobs")
-            
-            echo "Job details:"
-            echo "$JOBS_DATA" | jq '.'
-            
-            # For each job, get step details
-            echo "Step details:"
-            echo "$JOBS_DATA" | jq -c '.jobs[]' | while read -r job; do
-              echo "$job" | jq '.'
-            done
-            
             exit 1
           fi
         fi
@@ -218,6 +210,7 @@ sync-to-github:
       # Download macOS artifacts
       echo "Downloading macOS artifacts..."
       mkdir -p dist
+      cd dist
       
       # Get list of artifacts
       ARTIFACTS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
@@ -227,13 +220,14 @@ sync-to-github:
       echo "$ARTIFACTS" | jq '.'
       
       # Download each artifact
-      echo "$ARTIFACTS" | jq -r '.artifacts[] | .archive_download_url' | while read -r url; do
+      for url in $(echo "$ARTIFACTS" | jq -r '.artifacts[].archive_download_url'); do
         echo "Downloading from $url"
         curl -L -H "Authorization: token $GITHUB_TOKEN" "$url" -o artifact.zip
-        unzip -o artifact.zip -d dist/
+        unzip -o artifact.zip
         rm artifact.zip
       done
       
+      cd ..
       echo "Downloaded files in dist directory:"
       ls -la dist/
       
@@ -244,9 +238,7 @@ sync-to-github:
       - dist/*.dmg
       - .macos-builds-ready
     expire_in: 1 day
-  rules:
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  <<: *job_template
 
 create_release:
   stage: release
@@ -401,6 +393,4 @@ create_release:
       fi
       
       echo "Release creation completed!"
-  only:
-    - main
-    - tags 
+  <<: *job_template 
