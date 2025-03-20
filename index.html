@@ -701,64 +701,7 @@
       }
     });
     
-    // Initialize the manual zoom and time range inputs
-    function updateZoomInputs() {
-      if (timeSeriesChart) {
-        const xAxis = timeSeriesChart.scales.x;
-        const yAxis = timeSeriesChart.scales.y;
-        
-        document.getElementById('x-min').value = xAxis.min !== undefined ? formatAxisValue(xAxis.min, 'x') : '';
-        document.getElementById('x-max').value = xAxis.max !== undefined ? formatAxisValue(xAxis.max, 'x') : '';
-        document.getElementById('y-min').value = yAxis.min !== undefined ? formatAxisValue(yAxis.min, 'y') : '';
-        document.getElementById('y-max').value = yAxis.max !== undefined ? formatAxisValue(yAxis.max, 'y') : '';
-      }
-    }
-    
-    // Format axis values depending on the axis and current options
-    function formatAxisValue(value, axis) {
-      if (axis === 'x') {
-        const xAxisFormat = document.getElementById('x-axis-format').value;
-        if (xAxisFormat.startsWith('time-')) {
-          // Format as time
-          const date = new Date(value);
-          return date.toISOString().substr(11, 8); // Extract HH:MM:SS
-        } else {
-          // Format as seconds
-          return value.toFixed(3);
-        }
-      } else {
-        // Format Y axis based on scale
-        const yAxisScale = document.getElementById('y-axis-scale').value;
-        const precision = yAxisScale === 'ns' ? 0 : (yAxisScale === 'us' ? 2 : 3);
-        return value.toFixed(precision);
-      }
-    }
-    
-    // Parse axis value based on axis type
-    function parseAxisValue(value, axis) {
-      if (axis === 'x') {
-        const xAxisFormat = document.getElementById('x-axis-format').value;
-        if (xAxisFormat.startsWith('time-')) {
-          // Parse time format (HH:MM:SS)
-          if (value.includes(':')) {
-            const [hours, minutes, seconds] = value.split(':').map(Number);
-            const date = new Date();
-            // Set current date but the provided time
-            date.setHours(hours || 0, minutes || 0, seconds || 0, 0);
-            
-            // For time modes, we need to return the millisecond timestamp
-            return date.getTime();
-          }
-        }
-        // Default to parsing as float (seconds)
-        return parseFloat(value);
-      } else {
-        // Parse Y value as float
-        return parseFloat(value);
-      }
-    }
-    
-    // Apply manual zoom when the Apply button is clicked
+    // Manual zoom selection
     document.getElementById('apply-manual-zoom').addEventListener('click', () => {
       if (!timeSeriesChart) return;
       
@@ -772,25 +715,106 @@
       const xAxisFormat = document.getElementById('x-axis-format').value;
       
       if (xMin && xMax) {
-        // For time format, we need to convert time strings to date objects
+        // For time format, we need to convert time strings to timestamps
         if (xAxisFormat.startsWith('time-')) {
-          console.log(`Parsing time range: ${xMin} to ${xMax}`);
-          options.scales.x.min = parseAxisValue(xMin, 'x');
-          options.scales.x.max = parseAxisValue(xMax, 'x');
-          console.log(`Parsed to timestamps: ${options.scales.x.min} to ${options.scales.x.max}`);
+          // If the input is in HH:MM:SS format
+          if (xMin.includes(':') && xMax.includes(':')) {
+            try {
+              const xMinParts = xMin.split(':').map(Number);
+              const xMaxParts = xMax.split(':').map(Number);
+              
+              // Get current date as base
+              const today = new Date();
+              const baseDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+              
+              // Create dates with the time parts
+              const minDate = new Date(baseDate);
+              minDate.setHours(xMinParts[0] || 0, xMinParts[1] || 0, xMinParts[2] || 0, 0);
+              
+              const maxDate = new Date(baseDate);
+              maxDate.setHours(xMaxParts[0] || 0, xMaxParts[1] || 0, xMaxParts[2] || 0, 0);
+              
+              // Use timestamps in milliseconds
+              options.scales.x.min = minDate.getTime();
+              options.scales.x.max = maxDate.getTime();
+              
+              console.log(`Manual zoom with time: ${options.scales.x.min} to ${options.scales.x.max}`);
+            } catch (e) {
+              console.error('Error parsing time strings:', e);
+              alert('Please enter valid times in HH:MM:SS format');
+              return;
+            }
+          } else {
+            // Try parsing as direct millisecond timestamps
+            const minMs = parseFloat(xMin);
+            const maxMs = parseFloat(xMax);
+            
+            if (!isNaN(minMs) && !isNaN(maxMs)) {
+              options.scales.x.min = minMs;
+              options.scales.x.max = maxMs;
+            } else {
+              alert('For time format, please enter time as HH:MM:SS or direct timestamps');
+              return;
+            }
+          }
         } else {
-          options.scales.x.min = parseAxisValue(xMin, 'x');
-          options.scales.x.max = parseAxisValue(xMax, 'x');
+          // For seconds format, parse as is
+          options.scales.x.min = parseFloat(xMin);
+          options.scales.x.max = parseFloat(xMax);
         }
       }
       
       if (yMin && yMax) {
-        options.scales.y.min = parseAxisValue(yMin, 'y');
-        options.scales.y.max = parseAxisValue(yMax, 'y');
+        options.scales.y.min = parseFloat(yMin);
+        options.scales.y.max = parseFloat(yMax);
       }
       
       timeSeriesChart.update();
     });
+    
+    // Format axis values depending on the axis and current options
+    function formatAxisValue(value, axis) {
+      if (axis === 'x') {
+        const xAxisFormat = document.getElementById('x-axis-format').value;
+        if (xAxisFormat.startsWith('time-')) {
+          // Format as time from millisecond timestamp
+          try {
+            const date = new Date(value);
+            if (isNaN(date.getTime())) {
+              return 'Invalid date';
+            }
+            
+            // Determine timezone
+            let timeZone = 'UTC';
+            if (xAxisFormat === 'time-hawaii') {
+              timeZone = 'Pacific/Honolulu';
+            } else if (xAxisFormat === 'time-chile') {
+              timeZone = 'America/Santiago';
+            }
+            
+            // Format the time
+            return date.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false,
+              timeZone: timeZone
+            });
+          } catch (e) {
+            console.error('Error formatting axis value:', e);
+            return 'Error';
+          }
+        } else {
+          // Format as seconds
+          return value.toFixed(3);
+        }
+      } else {
+        // Format Y axis based on scale
+        const yAxisScale = document.getElementById('y-axis-scale').value;
+        const precision = yAxisScale === 'ns' ? 0 : (yAxisScale === 'us' ? 2 : 3);
+        return value.toFixed(precision);
+      }
+    }
     
     // Update input fields when chart is zoomed
     function onChartZoom() {
@@ -1280,26 +1304,16 @@
             });
           } else {
             // For wall clock, use date objects with timezone adjustment
-            const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
+            // Ensure timestamp is a number in seconds
+            const timestampInSeconds = typeof point.timestamp === 'string' 
+              ? parseFloat(point.timestamp) 
+              : point.timestamp;
             
-            // Debug log more timestamps to understand the data
-            if (Math.random() < 0.01) {
-              console.error("POINT TIMESTAMP DEBUG:", { 
-                original: point.timestamp,
-                parsed: timestampValue,
-                date: new Date(timestampValue * 1000).toISOString()
-              });
-            }
-            
-            // Create a JavaScript timestamp (milliseconds since epoch)
-            // Important: Our timestamps are in SECONDS, JS expects MILLISECONDS
-            const jsTimestamp = timestampValue * 1000;
-            
-            // Create Date using the proper millisecond timestamp
-            const dateObj = new Date(jsTimestamp);
+            // Convert seconds to milliseconds for JavaScript Date
+            const timestampMs = timestampInSeconds * 1000;
             
             pointData.push({
-              x: dateObj,
+              x: timestampMs, // Store as milliseconds timestamp - NOT a Date object
               y: scaleLatency(point.latency, yAxisScale)
             });
           }
@@ -1315,51 +1329,30 @@
         }));
         
       } else if (xAxisFormat.startsWith('time')) {
-        // For wall clock, use date objects with timezone adjustment
+        // For wall clock, store millisecond timestamps (not Date objects)
         pointData = signalData.sampleData.map(point => {
-          // Handle potential string timestamps
-          const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
+          // Ensure timestamp is a number in seconds
+          const timestampInSeconds = typeof point.timestamp === 'string' 
+            ? parseFloat(point.timestamp) 
+            : point.timestamp;
           
-          // Debug log more timestamps to understand the data
-          if (Math.random() < 0.01) {
-            console.error("POINT TIMESTAMP DEBUG:", { 
-              original: point.timestamp,
-              parsed: timestampValue,
-              date: new Date(timestampValue * 1000).toISOString()
+          // Convert seconds to milliseconds for JavaScript Date
+          const timestampMs = timestampInSeconds * 1000;
+          
+          // Debug a small sample of the timestamps
+          if (Math.random() < 0.001) {
+            console.log("Timestamp debug:", { 
+              seconds: timestampInSeconds,
+              milliseconds: timestampMs,
+              date: new Date(timestampMs).toISOString()
             });
           }
           
-          // Create a JavaScript timestamp (milliseconds since epoch)
-          // Important: Our timestamps are in SECONDS, JS expects MILLISECONDS
-          const jsTimestamp = timestampValue * 1000;
-          
-          // Create Date using the proper millisecond timestamp
-          const dateObj = new Date(jsTimestamp);
-          
           return {
-            x: dateObj,
+            x: timestampMs, // Store as milliseconds timestamp - NOT a Date object
             y: scaleLatency(point.latency, yAxisScale)
           };
         });
-      }
-      
-      // Verify all generated data points are valid dates for time charts
-      if (xAxisFormat.startsWith('time')) {
-        let validPoints = true;
-        for (let i = 0; i < pointData.length; i++) {
-          if (pointData[i].x instanceof Date) {
-            if (isNaN(pointData[i].x.getTime())) {
-              console.error(`Invalid date at index ${i}:`, pointData[i]);
-              validPoints = false;
-              // Fix invalid points by replacing with a default Date
-              pointData[i].x = new Date();
-            }
-          } else {
-            console.error(`Point at index ${i} is not a Date object:`, pointData[i]);
-            validPoints = false;
-          }
-        }
-        console.log(`Time axis data validation: ${validPoints ? 'All valid' : 'Some invalid points found and fixed'}`);
       }
       
       // Calculate appropriate Y-axis range based on actual data
@@ -1414,15 +1407,8 @@
                 display: true,
                 text: xAxisLabel
               },
-              adapters: {
-                date: {
-                  timezone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' : 
-                           xAxisFormat === 'time-chile' ? 'America/Santiago' : 
-                           'UTC'
-                }
-              },
+              // For time axis, don't use the adapters which can cause issues
               time: xAxisType === 'time' ? {
-                parser: 'auto',
                 unit: 'minute',
                 minUnit: 'second',
                 displayFormats: {
@@ -1432,86 +1418,51 @@
                   hour: 'HH:mm'
                 },
                 tooltipFormat: 'HH:mm:ss.SSS',
-                round: false,
-                distribution: 'linear'
               } : undefined,
               ticks: {
-                // Fix time display by ensuring proper date object conversion
+                // Format tick labels based on the chosen time format
                 callback: function(value, index, values) {
-                  // For Chart.js Time scale, ensure we have a valid date
-                  let date;
-                  
-                  // Debug: Log every tick value
-                  console.error("DEBUG TICK VALUE:", {
-                    rawValue: value,
-                    type: typeof value,
-                    isDate: value instanceof Date,
-                    valueString: String(value)
-                  });
-                  
-                  // DIRECT UNIX TIMESTAMP HANDLING:
-                  // If value looks like a Unix timestamp (milliseconds since epoch)
-                  if (typeof value === 'number' && value > 1000000000000) {
-                    // Handle directly as JavaScript timestamp (milliseconds since epoch)
-                    const jsDate = new Date(value);
-                    
-                    // Format with timeZone option
-                    return jsDate.toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                      hour12: false,
-                      timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
-                                xAxisFormat === 'time-chile' ? 'America/Santiago' : 
-                                'UTC'
-                    });
+                  if (xAxisFormat === 'seconds') {
+                    return value.toFixed(1);
                   }
                   
-                  // Our regular date objects - should have set timestamp correctly when created
-                  if (value instanceof Date) {
+                  // For time formats, value should be a timestamp in milliseconds
+                  if (typeof value === 'number') {
                     try {
-                      return value.toLocaleTimeString('en-US', {
-                        hour: '2-digit',
-                        minute: '2-digit', 
-                        second: '2-digit',
-                        hour12: false,
-                        timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
-                                  xAxisFormat === 'time-chile' ? 'America/Santiago' :
-                                  'UTC'
-                      });
-                    } catch (e) {
-                      console.error("Date formatting error:", e);
-                      return 'Error';
-                    }
-                  }
-                  
-                  // FALLBACK - try to parse as number
-                  if (typeof value === 'string') {
-                    // Try to parse as number
-                    const numValue = parseFloat(value);
-                    if (!isNaN(numValue) && numValue > 0) {
-                      // Create date using setTime for precision
-                      const numDate = new Date(0);
-                      numDate.setTime(numValue);
+                      // Create a date from the millisecond timestamp
+                      const date = new Date(value);
                       
-                      // Format
-                      return numDate.toLocaleTimeString('en-US', {
+                      // Check if the date is valid
+                      if (isNaN(date.getTime())) {
+                        console.error(`Invalid date from value: ${value}`);
+                        return 'Invalid';
+                      }
+                      
+                      // Format the date based on the selected timezone
+                      let timeZone = 'UTC';
+                      if (xAxisFormat === 'time-hawaii') {
+                        timeZone = 'Pacific/Honolulu';
+                      } else if (xAxisFormat === 'time-chile') {
+                        timeZone = 'America/Santiago';
+                      }
+                      
+                      // Format the date using toLocaleTimeString with the appropriate timezone
+                      return date.toLocaleTimeString('en-US', {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
                         hour12: false,
-                        timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
-                                  xAxisFormat === 'time-chile' ? 'America/Santiago' :
-                                  'UTC'
+                        timeZone: timeZone
                       });
+                    } catch (e) {
+                      console.error(`Error formatting date: ${e.message}, value: ${value}`);
+                      return 'Error';
                     }
                   }
                   
-                  // If we got here, we failed to parse the value
-                  console.error('Invalid date value format:', value);
-                  return 'Invalid';
+                  console.error(`Unexpected value type: ${typeof value}`);
+                  return 'Unknown';
                 },
-                source: 'auto',
                 autoSkip: true,
                 maxRotation: 0
               }
@@ -1533,24 +1484,30 @@
                   const point = context.raw;
                   const yLabel = point.y.toFixed(2);
                   
-                  if (xAxisFormat === 'time-hawaii') {
-                    const localTimeStr = new Date(point.x).toLocaleTimeString('en-US', { 
-                      hour12: false,
-                      timeZone: 'Pacific/Honolulu'
-                    });
-                    return `Time: ${localTimeStr}, Latency: ${yLabel}`;
-                  } else if (xAxisFormat === 'time-utc') {
-                    const localTimeStr = new Date(point.x).toLocaleTimeString('en-US', { 
-                      hour12: false,
-                      timeZone: 'UTC'
-                    });
-                    return `Time: ${localTimeStr}, Latency: ${yLabel}`;
-                  } else if (xAxisFormat === 'time-chile') {
-                    const localTimeStr = new Date(point.x).toLocaleTimeString('en-US', { 
-                      hour12: false,
-                      timeZone: 'America/Santiago'
-                    });
-                    return `Time: ${localTimeStr}, Latency: ${yLabel}`;
+                  if (xAxisFormat.startsWith('time')) {
+                    try {
+                      // Create a date from the millisecond timestamp
+                      const date = new Date(point.x);
+                      
+                      // Format the date based on the selected timezone
+                      let timeZone = 'UTC';
+                      if (xAxisFormat === 'time-hawaii') {
+                        timeZone = 'Pacific/Honolulu';
+                      } else if (xAxisFormat === 'time-chile') {
+                        timeZone = 'America/Santiago';
+                      }
+                      
+                      const localTimeStr = date.toLocaleTimeString('en-US', { 
+                        hour12: false,
+                        second: '2-digit',
+                        timeZone: timeZone
+                      });
+                      
+                      return `Time: ${localTimeStr}, Latency: ${yLabel}`;
+                    } catch (e) {
+                      console.error(`Error in tooltip: ${e.message}`);
+                      return `Time: (error), Latency: ${yLabel}`;
+                    }
                   } else {
                     return `Time: ${point.x.toFixed(3)}s, Latency: ${yLabel}`;
                   }
@@ -1577,10 +1534,6 @@
                 },
                 sensitivity: 3, // Lower sensitivity for better control
                 onZoom: function() {
-                  // This will load more detailed data when zoomed in - using existing datasets
-                  const chart = this.chart;
-                  // Performance check
-                  console.log('Zoom event detected');
                   // Update manual zoom inputs to match current zoom state
                   updateZoomInputs();
                 }
@@ -1718,6 +1671,19 @@
         document.getElementById('dist-x-max').value = xAxis.max !== undefined ? xAxis.max.toFixed(3) : '';
         document.getElementById('dist-y-min').value = yAxis.min !== undefined ? yAxis.min.toFixed(0) : '';
         document.getElementById('dist-y-max').value = yAxis.max !== undefined ? yAxis.max.toFixed(0) : '';
+      }
+    }
+    
+    // Initialize the manual zoom inputs
+    function updateZoomInputs() {
+      if (timeSeriesChart) {
+        const xAxis = timeSeriesChart.scales.x;
+        const yAxis = timeSeriesChart.scales.y;
+        
+        document.getElementById('x-min').value = xAxis.min !== undefined ? formatAxisValue(xAxis.min, 'x') : '';
+        document.getElementById('x-max').value = xAxis.max !== undefined ? formatAxisValue(xAxis.max, 'x') : '';
+        document.getElementById('y-min').value = yAxis.min !== undefined ? formatAxisValue(yAxis.min, 'y') : '';
+        document.getElementById('y-max').value = yAxis.max !== undefined ? formatAxisValue(yAxis.max, 'y') : '';
       }
     }
     
