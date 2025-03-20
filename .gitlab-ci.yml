@@ -27,7 +27,7 @@ build:linux:
   script:
     - npm install
     - npm run build
-    - npx electron-forge make --platform=linux
+    - npx @electron-forge/cli make --platform=linux
   artifacts:
     paths:
       - out/make/
@@ -43,7 +43,7 @@ build:mac:
   script:
     - npm install
     - npm run build
-    - npx electron-forge make --platform=darwin
+    - npx @electron-forge/cli make --platform=darwin
   artifacts:
     paths:
       - out/make/
@@ -58,7 +58,7 @@ build:windows:
   script:
     - npm install
     - npm run build
-    - npx electron-forge make --platform=win32
+    - npx @electron-forge/cli make --platform=win32
   artifacts:
     paths:
       - out/make/
