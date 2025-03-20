@@ -264,18 +264,18 @@ create_release:
     - apt-get update -y && apt-get install -y curl jq
     - |
       # Verify we have the required token
-      if [ -z "${GITLAB_API_TOKEN}" ]; then
-        echo "Error: GITLAB_API_TOKEN is not set"
+      if [ -z "${GITLAB_TOKEN}" ]; then
+        echo "Error: GITLAB_TOKEN is not set"
         exit 1
       fi
       
       # Test API token permissions
       echo "Testing API token permissions..."
-      AUTH_TEST=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+      AUTH_TEST=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
         "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}")
       
       if [ "$(echo "$AUTH_TEST" | jq -r '.message')" = "403 Forbidden" ]; then
-        echo "Error: GITLAB_API_TOKEN does not have sufficient permissions"
+        echo "Error: GITLAB_TOKEN does not have sufficient permissions"
         echo "Please ensure the token has api, write_repository, and release permissions"
         exit 1
       fi
@@ -285,12 +285,12 @@ create_release:
       echo "Processing release v${VERSION}..."
       
       # Check if release exists
-      EXISTING_RELEASE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+      EXISTING_RELEASE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
         "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
       
       if [ "$(echo "$EXISTING_RELEASE" | jq -r '.message')" != "404 Release Not Found" ]; then
         echo "Release v${VERSION} already exists, deleting it first..."
-        DELETE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        DELETE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
           --request DELETE \
           "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
         
@@ -305,7 +305,7 @@ create_release:
       echo "Creating release v${VERSION}..."
       
       # Create the release
-      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
         --data "name=v${VERSION}" \
         --data "tag_name=v${VERSION}" \
         --data "description=Release v${VERSION}" \
@@ -315,7 +315,7 @@ create_release:
       # Check if release was created successfully
       if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
         echo "Error: Failed to create release due to insufficient permissions"
-        echo "Please ensure GITLAB_API_TOKEN has the 'release' permission"
+        echo "Please ensure GITLAB_TOKEN has the 'release' permission"
         exit 1
       elif [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
         echo "Failed to create release. Response:"
@@ -334,52 +334,44 @@ create_release:
       # Function to upload and link a file to the release
       upload_and_link_file() {
         local file="$1"
-        local display_name="$2"
+        local name="$2"
+        echo "Uploading $name..."
         
-        echo "Uploading $display_name..."
-        
-        # Upload file to GitLab project
-        UPLOAD_RESPONSE=$(curl --silent \
-          --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        # Upload the file and get full response
+        UPLOAD_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
           --form "file=@${file}" \
-          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/uploads")
         
-        # Check upload response
-        if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
-          echo "Error: Failed to upload $display_name due to insufficient permissions"
+        echo "Upload response:"
+        echo "$UPLOAD_RESPONSE" | jq '.'
+        
+        # Extract the full URL from the response
+        UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.url')
+        MARKDOWN_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.markdown')
+        
+        if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ]; then
+          echo "Failed to upload file"
           return 1
         fi
         
-        # Get the full URL for the uploaded file
-        UPLOAD_URL="https://gitlab.com${CI_PROJECT_PATH}$(echo "$UPLOAD_RESPONSE" | jq -r '.url')"
-        
-        if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "https://gitlab.com${CI_PROJECT_PATH}null" ]; then
-          echo "Failed to get upload URL for $display_name. Response:"
-          echo "$UPLOAD_RESPONSE" | jq '.'
-          return 1
-        fi
+        # Use the full project URL for the asset link
+        FULL_URL="${CI_PROJECT_URL}${UPLOAD_URL}"
+        echo "Generated URL: ${FULL_URL}"
         
         echo "File uploaded successfully, linking to release..."
         
-        # Link the uploaded file to the release
-        LINK_RESPONSE=$(curl --silent \
-          --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --header "Content-Type: application/json" \
-          --data "{\"name\":\"${display_name}\", \"url\":\"${UPLOAD_URL}\"}" \
-          --request POST \
-          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links")
+        # Link the uploaded file to the release with the full URL
+        LINK_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+          -X POST \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/${VERSION}/assets/links" \
+          --data-urlencode "name=${name}" \
+          --data-urlencode "url=${FULL_URL}" \
+          --data "link_type=package")
+          
+        echo "Link response:"
+        echo "$LINK_RESPONSE" | jq '.'
         
-        if [ "$(echo "$LINK_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
-          echo "Error: Failed to link $display_name to release"
-          return 1
-        elif [ -z "$(echo "$LINK_RESPONSE" | jq -r '.url')" ] || [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
-          echo "Failed to create link for $display_name. Response:"
-          echo "$LINK_RESPONSE" | jq '.'
-          return 1
-        fi
-        
-        echo "Successfully uploaded and linked $display_name"
-        return 0
+        echo "Successfully uploaded and linked $name"
       }
       
       # Upload Windows installer
