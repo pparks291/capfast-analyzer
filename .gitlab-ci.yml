@@ -4,10 +4,70 @@ stages:
 
 variables:
   GIT_STRATEGY: clone
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  CONTAINER_BUILD_IMAGE: $CI_REGISTRY_IMAGE/builder:$CI_COMMIT_REF_SLUG
+  CONTAINER_TEST_IMAGE: $CI_REGISTRY_IMAGE/test:$CI_COMMIT_REF_SLUG
 
 cache:
   paths:
     - node_modules/
+
+.docker-login: &docker-login
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+
+build:builder-image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  <<: *docker-login
+  script:
+    - |
+      # Build the builder image with all dependencies
+      docker build -t $CONTAINER_BUILD_IMAGE -f- . <<EOF
+      FROM electronuserland/builder:wine
+      RUN apt-get update && apt-get install -y dpkg fakeroot wine mono-complete
+      WORKDIR /builds
+      COPY package*.json ./
+      RUN npm install
+      EOF
+    - docker push $CONTAINER_BUILD_IMAGE
+  rules:
+    - changes:
+        - package.json
+        - package-lock.json
+      when: always
+    - when: manual
+
+build:linux:
+  stage: build
+  image: $CONTAINER_BUILD_IMAGE
+  script:
+    - npm run build
+    - npx electron-builder --linux AppImage --publish never
+  artifacts:
+    paths:
+      - dist/**/*
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build:windows:
+  stage: build
+  image: $CONTAINER_BUILD_IMAGE
+  script:
+    - npm run build
+    - npx electron-builder --windows nsis --publish never
+  artifacts:
+    paths:
+      - dist/**/*
+    expire_in: 1 week
+  only:
+    - main
+    - tags
 
 sync-to-github:
   stage: build
@@ -116,42 +176,6 @@ sync-to-github:
       - .macos_builds_ready
     expire_in: 1 week
     when: on_success
-  only:
-    - main
-    - tags
-
-build:linux:
-  stage: build
-  image: electronuserland/builder:wine
-  before_script:
-    - apt-get update
-    - apt-get install -y dpkg fakeroot
-    - npm install
-  script:
-    - npm run build
-    - npx electron-builder --linux AppImage --publish never
-  artifacts:
-    paths:
-      - dist/**/*
-    expire_in: 1 week
-  only:
-    - main
-    - tags
-
-build:windows:
-  stage: build
-  image: electronuserland/builder:wine
-  before_script:
-    - apt-get update
-    - apt-get install -y wine mono-complete
-    - npm install
-  script:
-    - npm run build
-    - npx electron-builder --windows nsis --publish never
-  artifacts:
-    paths:
-      - dist/**/*
-    expire_in: 1 week
   only:
     - main
     - tags
