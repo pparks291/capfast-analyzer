@@ -120,92 +120,77 @@ sync-to-github:
     - git fetch origin
     - |
       if [[ -n "$CI_COMMIT_TAG" ]]; then
-        git push github $CI_COMMIT_TAG
-        REF=$CI_COMMIT_TAG
+        git push github "$CI_COMMIT_TAG"
       else
         git push github HEAD:main
-        REF=main
       fi
     - |
       echo "Waiting for GitHub Actions workflow to start..."
-      ATTEMPTS=0
-      MAX_ATTEMPTS=24
-      CURRENT_SHA=$(git rev-parse HEAD)
-      echo "Looking for workflow triggered by commit: $CURRENT_SHA"
+      COMMIT_SHA=$(git rev-parse HEAD)
+      echo "Looking for workflow triggered by commit: $COMMIT_SHA"
       
-      while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-        WORKFLOWS=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?head_sha=${CURRENT_SHA}")
+      # Wait for workflow to start and complete
+      for i in {1..24}; do
+        echo "Attempt $i of 24 - waiting 5 seconds..."
+        sleep 5
         
-        if [ $? -ne 0 ]; then
-          echo "Failed to fetch workflows"
-          exit 1
-        fi
+        # Get workflow runs for this commit
+        WORKFLOW_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?event=push&head_sha=$COMMIT_SHA")
         
-        WORKFLOW_COUNT=$(echo "$WORKFLOWS" | jq -r '.total_count')
-        if [ "$WORKFLOW_COUNT" = "0" ]; then
-          ATTEMPTS=$((ATTEMPTS + 1))
-          if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
-            echo "No workflows found for commit ${CURRENT_SHA} after ${MAX_ATTEMPTS} attempts"
-            exit 1
-          fi
-          echo "Attempt $ATTEMPTS of $MAX_ATTEMPTS - waiting 5 seconds..."
-          sleep 5
-          continue
-        fi
+        WORKFLOW_ID=$(echo "$WORKFLOW_JSON" | jq -r '.workflow_runs[0].id')
         
-        WORKFLOW_ID=$(echo "$WORKFLOWS" | jq -r '.workflow_runs[0].id')
-        if [ "$WORKFLOW_ID" != "null" ] && [ "$WORKFLOW_ID" != "" ]; then
-          echo "Found workflow ID: $WORKFLOW_ID for commit ${CURRENT_SHA}"
+        if [ "$WORKFLOW_ID" != "null" ] && [ -n "$WORKFLOW_ID" ]; then
+          echo "Found workflow ID: $WORKFLOW_ID for commit $COMMIT_SHA"
           break
         fi
-        
-        ATTEMPTS=$((ATTEMPTS + 1))
-        if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
-          echo "Timeout waiting for GitHub Actions workflow to start"
-          exit 1
-        fi
-        echo "Attempt $ATTEMPTS of $MAX_ATTEMPTS - waiting 5 seconds..."
-        sleep 5
       done
       
-      echo "Monitoring workflow progress..."
-      MONITOR_ATTEMPTS=0
-      MAX_MONITOR_ATTEMPTS=20  # 10 minutes maximum wait (20 * 30 seconds)
+      if [ "$WORKFLOW_ID" = "null" ] || [ -z "$WORKFLOW_ID" ]; then
+        echo "No workflow found after 2 minutes"
+        exit 1
+      fi
       
-      while [ $MONITOR_ATTEMPTS -lt $MAX_MONITOR_ATTEMPTS ]; do
-        WORKFLOW_DATA=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/${WORKFLOW_ID}")
+      echo "Monitoring workflow progress..."
+      while true; do
+        WORKFLOW_STATUS=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID" | \
+          jq -r '[.status, .conclusion] | @tsv')
         
-        if [ $? -ne 0 ]; then
-          echo "Failed to fetch workflow status"
-          exit 1
-        fi
-        
-        STATUS=$(echo "$WORKFLOW_DATA" | jq -r '.status')
-        CONCLUSION=$(echo "$WORKFLOW_DATA" | jq -r '.conclusion')
+        STATUS=$(echo "$WORKFLOW_STATUS" | cut -f1)
+        CONCLUSION=$(echo "$WORKFLOW_STATUS" | cut -f2)
         
         echo "Current status: $STATUS (conclusion: $CONCLUSION)"
         
         if [ "$STATUS" = "completed" ]; then
           if [ "$CONCLUSION" = "success" ]; then
             echo "GitHub Actions workflow completed successfully!"
-            # Create a file to indicate macOS builds are ready
+            
+            # Create artifacts directory
+            mkdir -p dist
+            
+            # Download macOS artifacts
+            echo "Downloading macOS artifacts..."
+            ARTIFACTS_URL="https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/$WORKFLOW_ID/artifacts"
+            ARTIFACTS_JSON=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "$ARTIFACTS_URL")
+            
+            # Download each artifact
+            echo "$ARTIFACTS_JSON" | jq -r '.artifacts[] | select(.name | contains("macos")) | .archive_download_url' | while read -r url; do
+              if [ -n "$url" ]; then
+                echo "Downloading from $url"
+                curl -L -H "Authorization: token ${GITHUB_TOKEN}" "$url" -o artifact.zip
+                unzip -o artifact.zip -d dist/
+                rm artifact.zip
+              fi
+            done
+            
+            # Create flag file to indicate macOS builds are ready
             touch .macos_builds_ready
-            exit 0
+            break
           else
             echo "GitHub Actions workflow failed with conclusion: $CONCLUSION"
             exit 1
           fi
-        elif [ "$STATUS" = "null" ] || [ "$STATUS" = "" ]; then
-          echo "Invalid workflow status received"
-          exit 1
-        fi
-        
-        MONITOR_ATTEMPTS=$((MONITOR_ATTEMPTS + 1))
-        if [ $MONITOR_ATTEMPTS -eq $MAX_MONITOR_ATTEMPTS ]; then
-          echo "Timeout waiting for workflow to complete after 10 minutes"
-          exit 1
         fi
         
         echo "Waiting 30 seconds before next check..."
@@ -213,9 +198,9 @@ sync-to-github:
       done
   artifacts:
     paths:
+      - dist/*.dmg
       - .macos_builds_ready
     expire_in: 1 week
-    when: on_success
   only:
     - main
     - tags
@@ -347,9 +332,14 @@ create_release:
         upload_and_link_file "dist/CapFast Analyzer-${VERSION}.AppImage" "CapFast Analyzer v${VERSION}.AppImage"
       fi
       
-      # Upload macOS DMG
-      if [ -f "dist/CapFast Analyzer-${VERSION}.dmg" ]; then
-        upload_and_link_file "dist/CapFast Analyzer-${VERSION}.dmg" "CapFast Analyzer v${VERSION}.dmg"
+      # Upload macOS Intel DMG
+      if [ -f "dist/CapFast Analyzer-${VERSION}-x64.dmg" ]; then
+        upload_and_link_file "dist/CapFast Analyzer-${VERSION}-x64.dmg" "CapFast Analyzer v${VERSION} (Intel).dmg"
+      fi
+      
+      # Upload macOS Apple Silicon DMG
+      if [ -f "dist/CapFast Analyzer-${VERSION}-arm64.dmg" ]; then
+        upload_and_link_file "dist/CapFast Analyzer-${VERSION}-arm64.dmg" "CapFast Analyzer v${VERSION} (Apple Silicon).dmg"
       fi
       
       echo "Release creation completed!"
