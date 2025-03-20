@@ -11,6 +11,7 @@ jobs:
     strategy:
       matrix:
         arch: [x64, arm64]
+      fail-fast: false  # Don't cancel other jobs if one fails
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,17 +24,38 @@ jobs:
           
       - name: Install dependencies
         run: |
-          npm ci
-          echo "Installed dependencies successfully"
+          echo "Installing dependencies..."
+          npm ci --verbose
+          echo "Dependencies installed successfully"
+          echo "Node modules directory contents:"
           ls -la node_modules
+          echo "Project root contents:"
+          ls -la
         
       - name: Build macOS (${{ matrix.arch }})
         run: |
+          echo "Starting macOS build for ${{ matrix.arch }}..."
           VERSION=$(node -e "console.log(require('./package.json').version)")
           echo "Building version ${VERSION} for ${{ matrix.arch }}"
-          npx electron-builder --mac ${{ matrix.arch }} --publish never
-          echo "Build completed, checking output:"
+          
+          # Check electron-builder installation
+          echo "Checking electron-builder..."
+          npx electron-builder --version
+          
+          # Set debug mode for electron-builder
+          export DEBUG=electron-builder
+          
+          # Run the build with verbose logging
+          npx electron-builder --mac ${{ matrix.arch }} --publish never --verbose
+          
+          echo "Build completed, checking output directory:"
           ls -la dist/
+          
+          # Verify DMG file exists
+          if ! ls dist/*.dmg 1> /dev/null 2>&1; then
+            echo "Error: No DMG file found in dist directory"
+            exit 1
+          fi
         
       - name: Upload artifact
         uses: actions/upload-artifact@v4
