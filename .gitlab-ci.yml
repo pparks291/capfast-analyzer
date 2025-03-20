@@ -224,6 +224,8 @@ sync-to-github:
       for url in $(echo "$ARTIFACTS" | jq -r '.artifacts[].archive_download_url'); do
         echo "Downloading from $url"
         curl -L -H "Authorization: token $GITHUB_TOKEN" "$url" -o artifact.zip
+        echo "Extracting artifact.zip..."
+        unzip -l artifact.zip
         unzip -o artifact.zip
         rm artifact.zip
       done
@@ -231,6 +233,7 @@ sync-to-github:
       cd ..
       echo "Downloaded files in dist directory:"
       ls -la dist/
+      find dist/ -name "*.dmg"
       
       # Create flag file to indicate macOS builds are ready
       touch .macos-builds-ready
@@ -321,6 +324,12 @@ create_release:
       fi
       
       echo "Release v${VERSION} created successfully"
+      
+      # List contents of dist directory
+      echo "Contents of dist directory:"
+      ls -la dist/
+      echo "Searching for DMG files:"
+      find dist/ -name "*.dmg"
       
       # Function to upload and link a file to the release
       upload_and_link_file() {
