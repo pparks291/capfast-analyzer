@@ -668,6 +668,9 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
   let lastTimeCheck = startTime;
   let estimatedTimeRemaining = null;
   
+  // Get the start of the capture for relative timestamps
+  let firstPacketTimestamp = null;
+  
   // Process packets in batches until the end of file
   while (processedBytes < fileSize) {
     // Check memory conditions and adjust batch size
@@ -702,8 +705,14 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
         // Store the last valid packet length
         lastPacketInclLen = packetHeader.incl_len;
         
-        // Calculate timestamp
+        // Calculate timestamp in seconds (Unix timestamp)
         const timestamp = getProperTimestamp(packetHeader);
+        
+        // Store the first packet timestamp for relative calculations
+        if (firstPacketTimestamp === null) {
+          firstPacketTimestamp = timestamp;
+          console.log(`First packet timestamp: ${new Date(timestamp * 1000).toISOString()}`);
+        }
         
         // For efficiency, first check if packet has a signal we care about
         let hasRelevantSignal = false;
@@ -732,7 +741,7 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
               const latencyMetric = calculateLatencyMetric(packetHeader, packetDataBuffer, signalId);
               
               if (latencyMetric !== null) {
-                // Store the data point with timestamp
+                // Store the data point with timestamp (ensure we store in seconds for consistency)
                 signalData[signalId].push({
                   timestamp: timestamp,
                   latency: latencyMetric

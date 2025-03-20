@@ -1279,9 +1279,24 @@
               y: scaleLatency(point.latency, yAxisScale)
             });
           } else {
-            // For time-based formats, convert the Unix timestamp to a proper JS Date
-            const date = new Date(point.timestamp * 1000);
-            console.log(`Sample timestamp: ${point.timestamp}, Date: ${date.toISOString()}`);
+            // For wall clock, use date objects with timezone adjustment
+            const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
+            
+            // Create Date object from Unix timestamp (seconds to milliseconds)
+            const millisecondTimestamp = timestampValue * 1000; 
+            const date = new Date(millisecondTimestamp);
+            
+            // Debugging (sample): Log conversion for a small percentage of points
+            if (Math.random() < 0.0001) {
+              console.log(`Timestamp info:`, {
+                original: point.timestamp,
+                milliseconds: millisecondTimestamp,
+                date: date.toISOString(),
+                valid: !isNaN(date.getTime()),
+                timezone: xAxisFormat
+              });
+            }
+            
             pointData.push({
               x: date,
               y: scaleLatency(point.latency, yAxisScale)
@@ -1302,11 +1317,22 @@
         // For wall clock, use date objects with timezone adjustment
         pointData = signalData.sampleData.map(point => {
           // Convert Unix timestamp to JS Date (multiply by 1000 to convert seconds to milliseconds)
-          const date = new Date(point.timestamp * 1000);
+          // Ensure timestamp is a number and handle potential string values
+          const timestampValue = typeof point.timestamp === 'string' ? parseFloat(point.timestamp) : point.timestamp;
           
-          // Log a sample of conversions to debug
-          if (Math.random() < 0.001) {
-            console.log(`Time conversion: ${point.timestamp} seconds → ${date.toISOString()}`);
+          // Create Date object from Unix timestamp (seconds to milliseconds)
+          const millisecondTimestamp = timestampValue * 1000; 
+          const date = new Date(millisecondTimestamp);
+          
+          // Debugging (sample): Log conversion for a small percentage of points
+          if (Math.random() < 0.0001) {
+            console.log(`Timestamp info:`, {
+              original: point.timestamp,
+              milliseconds: millisecondTimestamp,
+              date: date.toISOString(),
+              valid: !isNaN(date.getTime()),
+              timezone: xAxisFormat
+            });
           }
           
           return {
@@ -1314,6 +1340,25 @@
             y: scaleLatency(point.latency, yAxisScale)
           };
         });
+      }
+      
+      // Verify all generated data points are valid dates for time charts
+      if (xAxisFormat.startsWith('time')) {
+        let validPoints = true;
+        for (let i = 0; i < pointData.length; i++) {
+          if (pointData[i].x instanceof Date) {
+            if (isNaN(pointData[i].x.getTime())) {
+              console.error(`Invalid date at index ${i}:`, pointData[i]);
+              validPoints = false;
+              // Fix invalid points by replacing with a default Date
+              pointData[i].x = new Date();
+            }
+          } else {
+            console.error(`Point at index ${i} is not a Date object:`, pointData[i]);
+            validPoints = false;
+          }
+        }
+        console.log(`Time axis data validation: ${validPoints ? 'All valid' : 'Some invalid points found and fixed'}`);
       }
       
       // Calculate appropriate Y-axis range based on actual data
@@ -1376,7 +1421,7 @@
                 }
               },
               time: xAxisType === 'time' ? {
-                parser: 'YYYY-MM-DD HH:mm:ss.SSS',
+                parser: 'auto',
                 unit: 'minute',
                 displayFormats: {
                   millisecond: 'HH:mm:ss.SSS',
@@ -1384,38 +1429,54 @@
                   minute: 'HH:mm',
                   hour: 'HH:mm'
                 },
-                tooltipFormat: 'HH:mm:ss.SSS'
+                tooltipFormat: 'HH:mm:ss.SSS',
+                round: false
               } : undefined,
               ticks: {
                 // Fix time display by ensuring proper date object conversion
                 callback: function(value, index, values) {
                   if (xAxisType === 'time') {
-                    // Validate that we're dealing with proper Date objects
-                    const date = new Date(value);
-                    if (isNaN(date.getTime())) {
-                      console.error('Invalid date value:', value);
+                    // Direct date handling for valid date objects
+                    // For Chart.js Time scale, 'value' should already be a timestamp in ms
+                    let dateObj;
+                    if (value instanceof Date) {
+                      dateObj = value;
+                    } else {
+                      // Convert millisecond timestamps to Date objects
+                      dateObj = new Date(value);
+                    }
+                    
+                    // Validate date
+                    if (isNaN(dateObj.getTime())) {
+                      console.error(`Invalid date in tick callback:`, value);
                       return 'Invalid';
                     }
                     
-                    // Return formatted time string based on zoom level
-                    if (values.length > 15) {
-                      return date.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        hour12: false
-                      });
-                    } else {
-                      return date.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit', 
-                        second: '2-digit',
-                        hour12: false
+                    // Log occasional sample for debugging
+                    if (Math.random() < 0.01) {
+                      console.log(`Tick value:`, {
+                        value: value,
+                        dateObj: dateObj,
+                        formatted: dateObj.toTimeString()
                       });
                     }
+                    
+                    // Format time based on zoom level
+                    return dateObj.toLocaleTimeString('en-US', { 
+                      hour: '2-digit', 
+                      minute: '2-digit',
+                      second: '2-digit',
+                      hour12: false,
+                      timeZone: xAxisFormat === 'time-hawaii' ? 'Pacific/Honolulu' :
+                               xAxisFormat === 'time-chile' ? 'America/Santiago' :
+                               'UTC'
+                    });
                   }
                   return value;
                 },
-                source: 'auto'
+                source: 'auto',
+                autoSkip: true,
+                maxRotation: 0
               }
             },
             y: {
