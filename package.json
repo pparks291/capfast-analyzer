@@ -6,13 +6,14 @@
         "name": "Patrick Parks",
         "email": "patrick.parks@example.com"
     },
+    "license": "MIT",
     "homepage": "https://github.com/patrickparks/capFastAnalyzer",
     "main": "main.js",
     "scripts": {
         "start": "electron .",
         "build": "electron-builder --dir",
-        "make": "electron-forge make",
-        "package": "electron-forge package"
+        "make": "electron-builder",
+        "package": "electron-builder --dir"
     },
     "dependencies": {
         "binary-parser": "^2.2.1",
@@ -22,15 +23,8 @@
         "electron-squirrel-startup": "^1.0.0"
     },
     "devDependencies": {
-        "@electron-forge/cli": "^6.4.2",
-        "@electron-forge/maker-deb": "^6.4.2",
-        "@electron-forge/maker-rpm": "^6.4.2",
-        "@electron-forge/maker-squirrel": "^6.4.2",
-        "@electron-forge/maker-zip": "^6.4.2",
-        "@electron-forge/maker-dmg": "^6.4.2",
         "electron": "^28.3.3",
-        "electron-builder": "^24.6.4",
-        "electron-prebuilt-compile": "8.2.0"
+        "electron-builder": "^24.6.4"
     },
     "build": {
         "appId": "com.capfast.analyzer",
@@ -70,14 +64,7 @@
             ],
             "category": "Utility",
             "executableName": "capfast-analyzer",
-            "artifactName": "${productName}-${version}.${ext}",
-            "desktop": {
-                "Name": "CapFast Analyzer",
-                "Comment": "CAPFAST file analyzer",
-                "Categories": "Utility;",
-                "SingleMainWindow": "true",
-                "StartupNotify": "true"
-            }
+            "artifactName": "${productName}-${version}.${ext}"
         },
         "nsis": {
             "oneClick": false,
@@ -104,41 +91,6 @@
         ],
         "electronDownload": {
             "arch": "x64"
-        }
-    },
-    "config": {
-        "forge": {
-            "packagerConfig": {
-                "icon": "./assets/icon"
-            },
-            "makers": [
-                {
-                    "name": "@electron-forge/maker-squirrel",
-                    "config": {
-                        "name": "CapFastAnalyzer"
-                    }
-                },
-                {
-                    "name": "@electron-forge/maker-zip",
-                    "platforms": [
-                        "darwin"
-                    ]
-                },
-                {
-                    "name": "@electron-forge/maker-dmg",
-                    "config": {
-                        "format": "ULFO"
-                    }
-                },
-                {
-                    "name": "@electron-forge/maker-deb",
-                    "config": {}
-                },
-                {
-                    "name": "@electron-forge/maker-rpm",
-                    "config": {}
-                }
-            ]
         }
     }
 }

@@ -1,5 +1,6 @@
 stages:
   - build
+  - sync
   - release
 
 variables:
@@ -8,6 +9,68 @@ variables:
 cache:
   paths:
     - node_modules/
+
+sync-to-github:
+  stage: sync
+  image: alpine:latest
+  script:
+    - apk add --no-cache git curl jq
+    - git config --global user.email "gitlab-ci@example.com"
+    - git config --global user.name "GitLab CI"
+    - git remote add github "https://${GITHUB_TOKEN}@github.com/pparks291/capfast-analyzer.git" || git remote set-url github "https://${GITHUB_TOKEN}@github.com/pparks291/capfast-analyzer.git"
+    - git fetch origin
+    - |
+      if [[ -n "$CI_COMMIT_TAG" ]]; then
+        git push github $CI_COMMIT_TAG
+        REF=$CI_COMMIT_TAG
+      else
+        git push github HEAD:main
+        REF=main
+      fi
+    - |
+      # Wait for GitHub Actions workflow to start (up to 2 minutes)
+      for i in {1..24}; do
+        WORKFLOW_ID=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs?branch=${REF}&event=push&status=in_progress" | \
+          jq -r '.workflow_runs[0].id')
+        if [ "$WORKFLOW_ID" != "null" ]; then
+          echo "GitHub Actions workflow started with ID: $WORKFLOW_ID"
+          break
+        fi
+        if [ $i -eq 24 ]; then
+          echo "Timeout waiting for GitHub Actions workflow to start"
+          exit 1
+        fi
+        sleep 5
+      done
+      
+      # Monitor workflow progress
+      while true; do
+        WORKFLOW_STATUS=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/${WORKFLOW_ID}" | \
+          jq -r '.status')
+        
+        CONCLUSION=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/pparks291/capfast-analyzer/actions/runs/${WORKFLOW_ID}" | \
+          jq -r '.conclusion')
+        
+        echo "Current status: $WORKFLOW_STATUS (conclusion: $CONCLUSION)"
+        
+        if [ "$WORKFLOW_STATUS" = "completed" ]; then
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "GitHub Actions workflow completed successfully!"
+            exit 0
+          else
+            echo "GitHub Actions workflow failed!"
+            exit 1
+          fi
+        fi
+        
+        sleep 30
+      done
+  only:
+    - main
+    - tags
 
 build:linux:
   image: electronuserland/builder:wine
@@ -18,42 +81,10 @@ build:linux:
     - npm install
   script:
     - npm run build
-    - npx electron-forge make --platform=linux
+    - npx electron-builder --linux AppImage
   artifacts:
     paths:
-      - out/make/**/*
-    expire_in: 1 week
-  only:
-    - main
-    - tags
-
-build:mac-intel:
-  stage: build
-  tags:
-    - macos
-  script:
-    - npm install
-    - npm run build
-    - npx electron-forge make --platform=darwin --arch=x64
-  artifacts:
-    paths:
-      - out/make/
-    expire_in: 1 week
-  only:
-    - main
-    - tags
-
-build:mac-arm64:
-  stage: build
-  tags:
-    - macos
-  script:
-    - npm install
-    - npm run build
-    - npx electron-forge make --platform=darwin --arch=arm64
-  artifacts:
-    paths:
-      - out/make/
+      - dist/**/*
     expire_in: 1 week
   only:
     - main
@@ -68,10 +99,10 @@ build:windows:
     - npm install
   script:
     - npm run build
-    - npx electron-forge make --platform=win32
+    - npx electron-builder --windows nsis
   artifacts:
     paths:
-      - out/make/**/*
+      - dist/**/*
     expire_in: 1 week
   only:
     - main
@@ -83,10 +114,7 @@ create_release:
   needs:
     - build:linux
     - build:windows
-    - job: build:mac-intel
-      optional: true
-    - job: build:mac-arm64
-      optional: true
+    - sync-to-github
   script:
     - apt-get update -y && apt-get install -y curl jq
     - |
@@ -109,7 +137,7 @@ create_release:
       fi
       
       # Upload each artifact
-      find out/make -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" \) | while read file; do
+      find dist -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.zip" \) | while read file; do
         filename=$(basename "$file")
         echo "Uploading $filename to release v${VERSION}..."
         
