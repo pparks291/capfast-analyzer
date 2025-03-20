@@ -21,10 +21,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
           
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies and create lock file
+        run: |
+          rm -f package-lock.json
+          npm install
+          npm install --save-dev @electron-forge/cli@6.4.2
+          npm install --save-dev @electron-forge/maker-dmg@6.4.2
+          npm install --save-dev electron-builder@24.6.4
         
       - name: Build macOS app
         run: |
