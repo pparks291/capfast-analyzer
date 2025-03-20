@@ -1294,6 +1294,9 @@
         });
       }
       
+      // Calculate appropriate Y-axis range based on actual data
+      const yAxisRange = calculateYAxisRange(pointData);
+      
       datasets = [{
         label: 'Latency',
         data: pointData,
@@ -1362,7 +1365,10 @@
               title: {
                 display: true,
                 text: getYAxisLabel(yAxisScale)
-              }
+              },
+              beginAtZero: false,
+              suggestedMin: yAxisRange.min,
+              suggestedMax: yAxisRange.max
             }
           },
           plugins: {
@@ -1453,6 +1459,15 @@
       const precision = yAxisScale === 'ns' ? 0 : (yAxisScale === 'us' ? 2 : 3);
       const formattedLabels = bins.map(bin => bin.toFixed(precision));
       
+      // Find min and max bin values for better X-axis display
+      const minBin = Math.min(...bins);
+      const maxBin = Math.max(...bins);
+      console.log(`Histogram bin range: ${minBin.toFixed(precision)} to ${maxBin.toFixed(precision)} ${getUnitLabel(yAxisScale)}`);
+      
+      // Find max count for Y-axis scaling
+      const maxCount = Math.max(...counts);
+      const yMax = maxCount * 1.15; // Add 15% padding
+      
       // Create chart configuration
       const config = {
         type: 'bar',
@@ -1480,13 +1495,17 @@
                   // Only show a subset of labels for readability
                   return index % Math.ceil(bins.length / 20) === 0 ? formattedLabels[index] : '';
                 }
-              }
+              },
+              min: minBin,
+              max: maxBin
             },
             y: {
               title: {
                 display: true,
                 text: 'Frequency'
-              }
+              },
+              beginAtZero: true,
+              suggestedMax: yMax
             }
           },
           plugins: {
@@ -1654,6 +1673,32 @@
       // Update chart
       timeSeriesChart.update();
     });
+    
+    // Calculate appropriate Y-axis range for the data
+    function calculateYAxisRange(data) {
+      if (!data || data.length === 0) return { min: 0, max: 1 };
+      
+      // Find min and max values
+      let minY = Infinity;
+      let maxY = -Infinity;
+      
+      for (const point of data) {
+        if (point.y < minY) minY = point.y;
+        if (point.y > maxY) maxY = point.y;
+      }
+      
+      // Add padding (15% on top and bottom)
+      const range = maxY - minY;
+      const padding = range * 0.15;
+      
+      // Ensure min doesn't go below zero for latency (unless data actually has negative values)
+      const min = minY < 0 ? minY - padding : Math.max(0, minY - padding);
+      const max = maxY + padding;
+      
+      console.log(`Data range - Min: ${minY.toExponential(4)}, Max: ${maxY.toExponential(4)}, Padded Range: ${min.toExponential(4)} to ${max.toExponential(4)}`);
+      
+      return { min, max };
+    }
   </script>
 </body>
 </html>
