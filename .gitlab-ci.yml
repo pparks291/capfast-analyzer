@@ -392,9 +392,10 @@ create_release:
         upload_and_link_file "dist/CapFast Analyzer-${VERSION}.AppImage" "CapFast Analyzer v${VERSION}.AppImage"
       fi
       
-      # Upload macOS Intel DMG
-      if [ -f "dist/CapFast Analyzer-${VERSION}-x64.dmg" ]; then
-        upload_and_link_file "dist/CapFast Analyzer-${VERSION}-x64.dmg" "CapFast Analyzer v${VERSION} (Intel).dmg"
+      # Upload macOS Intel DMG (no architecture suffix in filename)
+      if [ -f "dist/CapFast Analyzer-${VERSION}.dmg" ]; then
+        mv "dist/CapFast Analyzer-${VERSION}.dmg" "dist/CapFast Analyzer-${VERSION}-x64.dmg"
+        upload_and_link_file "dist/CapFast Analyzer-${VERSION}-x64.dmg" "CapFast Analyzer v${VERSION} (Intel x64).dmg"
       fi
       
       # Upload macOS Apple Silicon DMG
