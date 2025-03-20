@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           echo "Installing dependencies..."
-          npm ci --verbose
+          npm ci
           echo "Dependencies installed successfully"
           echo "Node modules directory contents:"
           ls -la node_modules
@@ -45,8 +45,8 @@ jobs:
           # Set debug mode for electron-builder
           export DEBUG=electron-builder
           
-          # Run the build with verbose logging
-          npx electron-builder --mac ${{ matrix.arch }} --publish never --verbose
+          # Run the build
+          npx electron-builder --mac --${{ matrix.arch }} --publish never
           
           echo "Build completed, checking output directory:"
           ls -la dist/
