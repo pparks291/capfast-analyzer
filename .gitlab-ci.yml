@@ -1,7 +1,5 @@
 stages:
   - build
-  - sync
-  - release
 
 variables:
   GIT_STRATEGY: clone
@@ -11,7 +9,7 @@ cache:
     - node_modules/
 
 sync-to-github:
-  stage: sync
+  stage: build
   image: alpine:latest
   script:
     - apk add --no-cache git curl jq bash
@@ -93,8 +91,8 @@ sync-to-github:
     - tags
 
 build:linux:
-  image: electronuserland/builder:wine
   stage: build
+  image: electronuserland/builder:wine
   before_script:
     - apt-get update
     - apt-get install -y dpkg fakeroot
@@ -111,8 +109,8 @@ build:linux:
     - tags
 
 build:windows:
-  image: electronuserland/builder:wine
   stage: build
+  image: electronuserland/builder:wine
   before_script:
     - apt-get update
     - apt-get install -y wine mono-complete
@@ -129,8 +127,8 @@ build:windows:
     - tags
 
 create_release:
+  stage: build
   image: node:18
-  stage: release
   needs:
     - job: build:linux
       artifacts: true
