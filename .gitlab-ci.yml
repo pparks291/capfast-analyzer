@@ -1,6 +1,7 @@
 stages:
   - prepare
   - build
+  - sync
   - release
 
 variables:
