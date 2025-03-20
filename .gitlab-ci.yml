@@ -26,6 +26,13 @@ build:builder-image:
   <<: *docker-login
   script:
     - |
+      # Try to pull existing image first
+      if docker pull $CONTAINER_BUILD_IMAGE; then
+        echo "Found existing builder image for $CI_COMMIT_REF_SLUG, using cached version"
+        exit 0
+      fi
+      
+      echo "No existing image found for $CI_COMMIT_REF_SLUG, building new one..."
       # Build the builder image with all dependencies
       docker build -t $CONTAINER_BUILD_IMAGE -f- . <<EOF
       FROM electronuserland/builder:wine
@@ -36,8 +43,7 @@ build:builder-image:
       EOF
     - docker push $CONTAINER_BUILD_IMAGE
   only:
-    - main
-    - tags
+    - main  # Only run on main branch
 
 build:linux:
   stage: build
@@ -53,7 +59,6 @@ build:linux:
     expire_in: 1 week
   only:
     - main
-    - tags
 
 build:windows:
   stage: build
@@ -69,7 +74,6 @@ build:windows:
     expire_in: 1 week
   only:
     - main
-    - tags
 
 sync-to-github:
   stage: build
