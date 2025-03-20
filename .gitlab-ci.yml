@@ -14,6 +14,14 @@ cache:
   paths:
     - node_modules/
 
+.job_template: &job_template
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: always
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always
+    - when: never
+
 .docker-login: &docker-login
   before_script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
@@ -23,7 +31,8 @@ build:builder-image:
   image: docker:latest
   services:
     - docker:dind
-  <<: *docker-login
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - |
       # Try to pull existing image first
@@ -62,8 +71,7 @@ build:builder-image:
       RUN npm install electron
       EOF
     - docker push $CONTAINER_BUILD_IMAGE
-  only:
-    - main
+  <<: *job_template
 
 build:linux:
   stage: build
@@ -84,8 +92,7 @@ build:linux:
     paths:
       - dist/**/*
     expire_in: 1 week
-  only:
-    - main
+  <<: *job_template
 
 build:windows:
   stage: build
@@ -106,8 +113,7 @@ build:windows:
     paths:
       - dist/**/*
     expire_in: 1 week
-  only:
-    - main
+  <<: *job_template
 
 sync-to-github:
   stage: sync
@@ -231,9 +237,7 @@ sync-to-github:
       - dist/*.dmg
       - .macos-builds-ready
     expire_in: 1 day
-  rules:
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  <<: *job_template
 
 create_release:
   stage: release
@@ -388,6 +392,4 @@ create_release:
       fi
       
       echo "Release creation completed!"
-  only:
-    - main
-    - tags 
+  <<: *job_template 
