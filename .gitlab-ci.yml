@@ -201,21 +201,24 @@ create_release:
     - |
       # Get version from package.json
       VERSION=$(node -e "console.log(require('./package.json').version)")
+      echo "Creating release v${VERSION}..."
       
-      # Check if release exists
-      RELEASE_EXISTS=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}" | \
-        jq -r '.message')
+      # Create the release
+      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        --data "name=v${VERSION}" \
+        --data "tag_name=v${VERSION}" \
+        --data "description=Release v${VERSION}" \
+        --data "ref=${CI_COMMIT_SHA}" \
+        --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases")
       
-      # Create release if it doesn't exist
-      if [[ "$RELEASE_EXISTS" == "404 Release Not Found" ]]; then
-        curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --data "name=v${VERSION}" \
-          --data "tag_name=v${VERSION}" \
-          --data "description=Release v${VERSION}" \
-          --data "ref=${CI_COMMIT_SHA}" \
-          --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases"
+      # Check if release was created successfully
+      if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
+        echo "Failed to create release. Response:"
+        echo "$RELEASE_RESPONSE" | jq '.'
+        exit 1
       fi
+      
+      echo "Release v${VERSION} created successfully"
       
       # Upload each artifact
       find dist -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.zip" \) | while read file; do
@@ -227,16 +230,34 @@ create_release:
           --upload-file "$file" \
           --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
         
+        # Check if upload was successful
+        if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.url')" = "null" ]; then
+          echo "Failed to upload $filename. Response:"
+          echo "$UPLOAD_RESPONSE" | jq '.'
+          continue
+        fi
+        
         # Get URL from response
-        UPLOAD_URL=$(echo $UPLOAD_RESPONSE | jq -r ".url")
+        UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r ".url")
         
         # Add file to release
-        curl --request POST \
+        LINK_RESPONSE=$(curl --silent --request POST \
           --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           --data "name=${filename}" \
           --data "url=${UPLOAD_URL}" \
-          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links"
+          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links")
+        
+        # Check if link was created successfully
+        if [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
+          echo "Failed to create link for $filename. Response:"
+          echo "$LINK_RESPONSE" | jq '.'
+          continue
+        fi
+        
+        echo "Successfully uploaded and linked $filename"
       done
+      
+      echo "Release creation completed!"
   only:
     - main
     - tags 
