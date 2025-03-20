@@ -52,14 +52,26 @@ const memoryMonitor = {
     // Start with current batch size
     let newBatchSize = currentBatchSize;
     
-    // If memory usage is high, reduce batch size
-    if (usage.heap.usedPercent > 80) {
-      newBatchSize = Math.max(100, Math.floor(currentBatchSize * 0.5));
+    // If memory usage is high, reduce batch size more aggressively
+    if (usage.heap.usedPercent > 85) {
+      // Severe memory pressure - drastically reduce batch size
+      newBatchSize = Math.max(10, Math.floor(currentBatchSize * 0.3));
+      console.log(`Severe memory pressure (${usage.heap.usedPercent.toFixed(1)}%), aggressively reducing batch size to ${newBatchSize}`);
+    } else if (usage.heap.usedPercent > 75) {
+      // High memory pressure - significantly reduce batch size
+      newBatchSize = Math.max(50, Math.floor(currentBatchSize * 0.5));
+      console.log(`High memory pressure (${usage.heap.usedPercent.toFixed(1)}%), reducing batch size to ${newBatchSize}`);
     } else if (usage.heap.usedPercent > 60) {
-      newBatchSize = Math.max(200, Math.floor(currentBatchSize * 0.7));
+      // Moderate memory pressure - moderately reduce batch size
+      newBatchSize = Math.max(100, Math.floor(currentBatchSize * 0.7));
     } else if (usage.heap.usedPercent < 30 && fileSize > 1024 * 1024 * 100) {
-      // If memory usage is low and file is large, increase batch size
-      newBatchSize = Math.min(10000, Math.floor(currentBatchSize * 1.5));
+      // Low memory usage and large file - carefully increase batch size
+      newBatchSize = Math.min(2000, Math.floor(currentBatchSize * 1.2));
+    }
+    
+    // For extremely large files, keep batch sizes smaller regardless of memory
+    if (fileSize > 5 * 1024 * 1024 * 1024) { // > 5GB
+      newBatchSize = Math.min(newBatchSize, 500);
     }
     
     return newBatchSize;
@@ -329,6 +341,10 @@ ipcMain.handle('analyze-file', async (event, filePath) => {
         message: `Extremely large file detected (${(fileSize / (1024 * 1024 * 1024)).toFixed(2)} GB). Optimizing for memory efficiency.`,
         progress: 0
       });
+      
+      // For extremely large files, start with smaller batch sizes
+      const initialMemory = memoryMonitor.getMemoryUsage();
+      console.log(`Initial memory before analysis: Heap ${initialMemory.heap.usedPercent.toFixed(1)}%, System ${initialMemory.system.usedPercent.toFixed(1)}%`);
     }
     
     // PASS 1: Identify all signals using batch processing
@@ -759,30 +775,20 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
       if (progressPercent % 10 === 0) {
         const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
         
-        // If memory usage is getting high, apply emergency measures
+        // If memory usage is getting high, adjust batch size more aggressively
         if (memUsage.heap.usedPercent > 85) {
-          // Emergency: drop some data points to reduce memory pressure
-          const dropFactor = memUsage.heap.usedPercent > 95 ? 0.5 : 0.75;
-          
-          // Reduce the size of each signal's dataset
-          for (const signalId of selectedSignals) {
-            if (signalData[signalId].length > 1000) {
-              const newLength = Math.floor(signalData[signalId].length * dropFactor);
-              signalData[signalId] = reduceDataPoints(signalData[signalId], newLength);
-              
-              console.log(`Emergency memory management: reduced signal ${signalId} from ${signalData[signalId].length} to ${newLength} points`);
-            }
-          }
+          // Drastically reduce batch size to handle memory pressure
+          BATCH_SIZE = Math.max(25, Math.floor(BATCH_SIZE * 0.3));
           
           // Force garbage collection
           if (global.gc) {
             global.gc();
           }
           
-          // Report memory emergency action to UI
+          // Report memory pressure action to UI
           updateAnalysisStatus({
-            status: 'memory-emergency',
-            message: `Memory usage critical (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing data resolution.`,
+            status: 'memory-pressure',
+            message: `High memory usage (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing batch size to ${BATCH_SIZE} packets.`,
             progress: progressPercent
           });
         } else {
@@ -810,38 +816,17 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
     if (global.gc) {
       global.gc();
       
-      // If memory usage is still high after GC, take more aggressive action
+      // If memory usage is still high after GC, take more aggressive action with batching
       if (memoryMonitor.isMemoryConstrained()) {
-        // 1. Reduce batch size more aggressively
-        BATCH_SIZE = Math.max(50, Math.floor(BATCH_SIZE * 0.4));
+        // Further reduce batch size even more to manage memory
+        BATCH_SIZE = Math.max(10, Math.floor(BATCH_SIZE * 0.5));
+        console.log(`Memory constrained after GC, reducing batch size to ${BATCH_SIZE} packets`);
         
-        // 2. Emergency measure: Trim data arrays if they're getting too large
-        const dataPoints = Object.values(signalData).reduce((total, arr) => total + arr.length, 0);
-        if (dataPoints > 5000000) { // If more than 5 million data points
-          console.log('Emergency memory management: Trimming data arrays');
-          
-          // Trim arrays to a more manageable size by keeping every Nth point
-          const targetSize = 2000000; // Target 2 million points
-          const reductionFactor = Math.ceil(dataPoints / targetSize);
-          
-          Object.keys(signalData).forEach(signalId => {
-            if (signalData[signalId].length > 1000) { // Don't trim small arrays
-              const reducedArray = [];
-              for (let i = 0; i < signalData[signalId].length; i += reductionFactor) {
-                reducedArray.push(signalData[signalId][i]);
-              }
-              signalData[signalId] = reducedArray;
-            }
-          });
-          
-          // Log memory after emergency reduction
-          const postMemory = memoryMonitor.logMemoryStatus('after emergency data reduction');
-          
-          updateAnalysisStatus({
-            status: 'memory-emergency',
-            message: `Emergency memory management activated: reduced to ${targetSize.toLocaleString()} data points`,
-            progress: progressPercent
-          });
+        // Pause briefly to allow memory to stabilize if extremely constrained
+        if (memoryMonitor.getMemoryUsage().heap.usedPercent > 90) {
+          console.log('Memory critically constrained, pausing briefly to stabilize');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          if (global.gc) global.gc();
         }
       }
     }
@@ -927,6 +912,54 @@ function createWorker(signalChunk, workerId) {
       
       // Notify parent process that we're done
       parentPort.postMessage({ done: true });
+      
+      // Reduce data points array to target length while preserving distribution
+      function reduceDataPoints(dataPoints, targetLength) {
+        // If already at or below target length, return as is
+        if (dataPoints.length <= targetLength) {
+          return dataPoints;
+        }
+        
+        // For very large reductions, use systematic sampling
+        if (dataPoints.length > targetLength * 10) {
+          // Calculate the sampling interval
+          const interval = Math.floor(dataPoints.length / targetLength);
+          const result = [];
+          
+          // Systematic sampling: take every nth item
+          for (let i = 0; i < dataPoints.length; i += interval) {
+            result.push(dataPoints[i]);
+          }
+          
+          // Add the last point if it's not already included
+          if (result.length < targetLength && result[result.length - 1] !== dataPoints[dataPoints.length - 1]) {
+            result.push(dataPoints[dataPoints.length - 1]);
+          }
+          
+          return result;
+        }
+        
+        // For smaller reductions, use a more precise approach
+        // Sort the data by timestamp if not already sorted
+        dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // We want to keep the first and last points for time range consistency
+        const result = [dataPoints[0]];
+        
+        // Calculate interval between points
+        const step = (dataPoints.length - 2) / (targetLength - 2);
+        
+        // Add interior points
+        for (let i = 1; i < targetLength - 1; i++) {
+          const index = Math.floor(1 + i * step);
+          result.push(dataPoints[index]);
+        }
+        
+        // Add the last point
+        result.push(dataPoints[dataPoints.length - 1]);
+        
+        return result;
+      }
       
       // Calculate histogram of latency values - OPTIMIZED TO AVOID STACK OVERFLOW
       function createHistogram(values, bins) {
@@ -1350,6 +1383,54 @@ function createHistogram(values, bins) {
     bins: binCenters,
     counts
   };
+}
+
+// Reduce data points array to target length while preserving distribution
+function reduceDataPoints(dataPoints, targetLength) {
+  // If already at or below target length, return as is
+  if (dataPoints.length <= targetLength) {
+    return dataPoints;
+  }
+  
+  // For very large reductions, use systematic sampling
+  if (dataPoints.length > targetLength * 10) {
+    // Calculate the sampling interval
+    const interval = Math.floor(dataPoints.length / targetLength);
+    const result = [];
+    
+    // Systematic sampling: take every nth item
+    for (let i = 0; i < dataPoints.length; i += interval) {
+      result.push(dataPoints[i]);
+    }
+    
+    // Add the last point if it's not already included
+    if (result.length < targetLength && result[result.length - 1] !== dataPoints[dataPoints.length - 1]) {
+      result.push(dataPoints[dataPoints.length - 1]);
+    }
+    
+    return result;
+  }
+  
+  // For smaller reductions, use a more precise approach
+  // Sort the data by timestamp if not already sorted
+  dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+  
+  // We want to keep the first and last points for time range consistency
+  const result = [dataPoints[0]];
+  
+  // Calculate interval between points
+  const step = (dataPoints.length - 2) / (targetLength - 2);
+  
+  // Add interior points
+  for (let i = 1; i < targetLength - 1; i++) {
+    const index = Math.floor(1 + i * step);
+    result.push(dataPoints[index]);
+  }
+  
+  // Add the last point
+  result.push(dataPoints[dataPoints.length - 1]);
+  
+  return result;
 }
 
 // Update progress bar and status
