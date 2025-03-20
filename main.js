@@ -1252,12 +1252,22 @@ function calculateLatencyMetric(header, data, signalId) {
                         (data[tcpHeaderStart + 6] << 8) | 
                         data[tcpHeaderStart + 7];
           
+          // Debug logging to verify we're getting real values
+          if (Math.random() < 0.0001) { // Log only a small fraction of values to avoid flooding
+            console.log(`Unmodified TCP sequence number: ${seqNum}`);
+          }
+          
           return seqNum; // Return actual sequence number instead of modulo 1000
         }
       }
     } catch (e) {
       // Fall back to timestamp-based metric
     }
+  }
+  
+  // Debug logging to verify we're getting real values
+  if (Math.random() < 0.0001) { // Log only a small fraction of values to avoid flooding
+    console.log(`Unmodified timestamp microseconds: ${header.ts_usec}`);
   }
   
   // Default: use actual microsecond timestamp instead of modulo 1000
