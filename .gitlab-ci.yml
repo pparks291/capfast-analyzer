@@ -1,5 +1,4 @@
 stages:
-  - test
   - build
   - release
 
@@ -9,17 +8,6 @@ variables:
 cache:
   paths:
     - node_modules/
-
-test:
-  image: node:18
-  stage: test
-  script:
-    - npm install
-    - echo "No tests defined, skipping tests..."
-    - echo "To add tests, create a 'test' script in package.json"
-    - exit 0
-  except:
-    - tags
 
 build:linux:
   image: electronuserland/builder:wine
@@ -36,14 +24,30 @@ build:linux:
     - main
     - tags
 
-build:mac:
+build:mac-intel:
   stage: build
   tags:
     - macos
   script:
     - npm install
     - npm run build
-    - npx electron-forge make --platform=darwin
+    - npx electron-forge make --platform=darwin --arch=x64
+  artifacts:
+    paths:
+      - out/make/
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build:mac-arm64:
+  stage: build
+  tags:
+    - macos
+  script:
+    - npm install
+    - npm run build
+    - npx electron-forge make --platform=darwin --arch=arm64
   artifacts:
     paths:
       - out/make/
@@ -73,7 +77,9 @@ create_release:
   needs:
     - build:linux
     - build:windows
-    - job: build:mac
+    - job: build:mac-intel
+      optional: true
+    - job: build:mac-arm64
       optional: true
   script:
     - apt-get update -y && apt-get install -y curl jq
