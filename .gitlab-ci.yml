@@ -252,37 +252,41 @@ create_release:
         filename=$(basename "$file")
         echo "Uploading $filename to release v${VERSION}..."
         
-        # Upload file
-        UPLOAD_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --upload-file "$file" \
-          --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
+        # Upload file to GitLab project
+        UPLOAD_RESPONSE=$(curl --silent \
+          --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          --form "file=@${file}" \
+          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
         
-        # Check if upload was successful
+        # Check upload response
         if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
           echo "Error: Failed to upload $filename due to insufficient permissions"
-          echo "Please ensure GITLAB_API_TOKEN has the 'write_repository' permission"
           continue
-        elif [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.url')" = "null" ]; then
-          echo "Failed to upload $filename. Response:"
+        fi
+        
+        # Get the full URL for the uploaded file
+        UPLOAD_URL="https://gitlab.com${CI_PROJECT_PATH}$(echo "$UPLOAD_RESPONSE" | jq -r '.url')"
+        
+        if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "https://gitlab.com${CI_PROJECT_PATH}null" ]; then
+          echo "Failed to get upload URL for $filename. Response:"
           echo "$UPLOAD_RESPONSE" | jq '.'
           continue
         fi
         
-        # Get URL from response
-        UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r ".url")
+        echo "File uploaded successfully, linking to release..."
         
-        # Add file to release
-        LINK_RESPONSE=$(curl --silent --request POST \
+        # Link the uploaded file to the release
+        LINK_RESPONSE=$(curl --silent \
           --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --data "name=${filename}" \
-          --data "url=${UPLOAD_URL}" \
+          --header "Content-Type: application/json" \
+          --data "{\"name\":\"${filename}\", \"url\":\"${UPLOAD_URL}\"}" \
+          --request POST \
           "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links")
         
-        # Check if link was created successfully
         if [ "$(echo "$LINK_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
-          echo "Error: Failed to link $filename due to insufficient permissions"
+          echo "Error: Failed to link $filename to release"
           continue
-        elif [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
+        elif [ -z "$(echo "$LINK_RESPONSE" | jq -r '.url')" ] || [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
           echo "Failed to create link for $filename. Response:"
           echo "$LINK_RESPONSE" | jq '.'
           continue
