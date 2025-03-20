@@ -205,6 +205,23 @@ create_release:
       fi
     - apt-get update -y && apt-get install -y curl jq
     - |
+      # Verify we have the required token
+      if [ -z "${GITLAB_API_TOKEN}" ]; then
+        echo "Error: GITLAB_API_TOKEN is not set"
+        exit 1
+      fi
+      
+      # Test API token permissions
+      echo "Testing API token permissions..."
+      AUTH_TEST=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}")
+      
+      if [ "$(echo "$AUTH_TEST" | jq -r '.message')" = "403 Forbidden" ]; then
+        echo "Error: GITLAB_API_TOKEN does not have sufficient permissions"
+        echo "Please ensure the token has api, write_repository, and release permissions"
+        exit 1
+      fi
+      
       # Get version from package.json
       VERSION=$(node -e "console.log(require('./package.json').version)")
       echo "Creating release v${VERSION}..."
@@ -218,7 +235,11 @@ create_release:
         --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases")
       
       # Check if release was created successfully
-      if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
+      if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
+        echo "Error: Failed to create release due to insufficient permissions"
+        echo "Please ensure GITLAB_API_TOKEN has the 'release' permission"
+        exit 1
+      elif [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
         echo "Failed to create release. Response:"
         echo "$RELEASE_RESPONSE" | jq '.'
         exit 1
@@ -237,7 +258,11 @@ create_release:
           --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
         
         # Check if upload was successful
-        if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.url')" = "null" ]; then
+        if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
+          echo "Error: Failed to upload $filename due to insufficient permissions"
+          echo "Please ensure GITLAB_API_TOKEN has the 'write_repository' permission"
+          continue
+        elif [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.url')" = "null" ]; then
           echo "Failed to upload $filename. Response:"
           echo "$UPLOAD_RESPONSE" | jq '.'
           continue
@@ -254,7 +279,10 @@ create_release:
           "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links")
         
         # Check if link was created successfully
-        if [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
+        if [ "$(echo "$LINK_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
+          echo "Error: Failed to link $filename due to insufficient permissions"
+          continue
+        elif [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
           echo "Failed to create link for $filename. Response:"
           echo "$LINK_RESPONSE" | jq '.'
           continue
