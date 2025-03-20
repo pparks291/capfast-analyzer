@@ -234,7 +234,6 @@ sync-to-github:
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_BRANCH == "dev/time-axis-improvements"
 
 create_release:
   stage: release
