@@ -1201,11 +1201,11 @@
     function scaleLatency(latency, scale) {
       switch (scale) {
         case 'ns':
-          return latency; // No scaling (already in ns)
+          return latency * 1000; // Convert μs to ns
         case 'us':
-          return latency / 1000; // Convert ns to μs
+          return latency; // No scaling (already in μs)
         case 'ms':
-          return latency / 1000000; // Convert ns to ms
+          return latency / 1000; // Convert μs to ms
         default:
           return latency;
       }

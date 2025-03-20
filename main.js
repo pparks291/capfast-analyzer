@@ -1252,7 +1252,7 @@ function calculateLatencyMetric(header, data, signalId) {
                         (data[tcpHeaderStart + 6] << 8) | 
                         data[tcpHeaderStart + 7];
           
-          return seqNum % 1000; // Simple example
+          return seqNum; // Return actual sequence number instead of modulo 1000
         }
       }
     } catch (e) {
@@ -1260,8 +1260,8 @@ function calculateLatencyMetric(header, data, signalId) {
     }
   }
   
-  // Default: use microsecond component of timestamp as latency metric
-  return header.ts_usec % 1000;
+  // Default: use actual microsecond timestamp instead of modulo 1000
+  return header.ts_usec;
 }
 
 // Calculate latency metrics for each signal (used for small datasets)
