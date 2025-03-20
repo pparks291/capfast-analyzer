@@ -341,13 +341,15 @@ create_release:
         echo "Upload response:"
         echo "$UPLOAD_RESPONSE" | jq '.'
         
-        # Extract the full URL from the upload response
-        ASSET_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.full_url')
-        if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
-          echo "Failed to get asset URL from upload response"
+        # Extract the path from the upload response and construct the full URL
+        UPLOAD_PATH=$(echo "$UPLOAD_RESPONSE" | jq -r '.full_path')
+        if [ -z "$UPLOAD_PATH" ] || [ "$UPLOAD_PATH" = "null" ]; then
+          echo "Failed to get upload path from response"
           return 1
         fi
         
+        # Construct the complete asset URL using the GitLab instance URL
+        ASSET_URL="${CI_SERVER_URL}${UPLOAD_PATH}"
         echo "Asset URL: ${ASSET_URL}"
         
         # Create JSON payload for the link
