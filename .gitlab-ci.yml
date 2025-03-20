@@ -248,34 +248,30 @@ create_release:
   stage: release
   image: node:18
   needs:
-    - job: build:linux
-      artifacts: true
-    - job: build:windows
-      artifacts: true
-    - job: sync-to-github
-      artifacts: true
+    - build:linux
+    - build:windows
+    - sync-to-github
+  variables:
+    VERSION: "1.0.0"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
-    - |
-      # Verify macOS builds completed successfully
-      if [ ! -f .macos-builds-ready ]; then
-        echo "macOS builds were not successful"
-        exit 1
-      fi
     - apt-get update -y && apt-get install -y curl jq
     - |
       # Verify we have the required token
-      if [ -z "${GITLAB_TOKEN}" ]; then
-        echo "Error: GITLAB_TOKEN is not set"
+      if [ -z "${GITLAB_API_TOKEN}" ]; then
+        echo "Error: GITLAB_API_TOKEN is not set"
         exit 1
       fi
       
       # Test API token permissions
       echo "Testing API token permissions..."
-      AUTH_TEST=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}")
+      AUTH_TEST=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}")
       
       if [ "$(echo "$AUTH_TEST" | jq -r '.message')" = "403 Forbidden" ]; then
-        echo "Error: GITLAB_TOKEN does not have sufficient permissions"
+        echo "Error: GITLAB_API_TOKEN does not have sufficient permissions"
         echo "Please ensure the token has api, write_repository, and release permissions"
         exit 1
       fi
@@ -285,14 +281,14 @@ create_release:
       echo "Processing release v${VERSION}..."
       
       # Check if release exists
-      EXISTING_RELEASE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
+      EXISTING_RELEASE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
       
       if [ "$(echo "$EXISTING_RELEASE" | jq -r '.message')" != "404 Release Not Found" ]; then
         echo "Release v${VERSION} already exists, deleting it first..."
-        DELETE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        DELETE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           --request DELETE \
-          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/v${VERSION}")
         
         if [ $? -ne 0 ]; then
           echo "Failed to delete existing release. Response:"
@@ -305,17 +301,17 @@ create_release:
       echo "Creating release v${VERSION}..."
       
       # Create the release
-      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
         --data "name=v${VERSION}" \
         --data "tag_name=v${VERSION}" \
         --data "description=Release v${VERSION}" \
         --data "ref=${CI_COMMIT_SHA}" \
-        --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases")
+        --request POST "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases")
       
       # Check if release was created successfully
       if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.message')" = "403 Forbidden" ]; then
         echo "Error: Failed to create release due to insufficient permissions"
-        echo "Please ensure GITLAB_TOKEN has the 'release' permission"
+        echo "Please ensure GITLAB_API_TOKEN has the 'release' permission"
         exit 1
       elif [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
         echo "Failed to create release. Response:"
@@ -338,7 +334,7 @@ create_release:
         echo "Uploading $name..."
         
         # Upload the file and get full response
-        UPLOAD_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        UPLOAD_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           --form "file=@${file}" \
           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/uploads")
         
@@ -361,7 +357,7 @@ create_release:
         echo "File uploaded successfully, linking to release..."
         
         # Link the uploaded file to the release with the full URL
-        LINK_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        LINK_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           -X POST \
           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/${VERSION}/assets/links" \
           --data-urlencode "name=${name}" \
