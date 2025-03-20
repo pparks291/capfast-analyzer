@@ -4,10 +4,70 @@ stages:
 
 variables:
   GIT_STRATEGY: clone
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  CONTAINER_BUILD_IMAGE: $CI_REGISTRY_IMAGE/builder:$CI_COMMIT_REF_SLUG
+  CONTAINER_TEST_IMAGE: $CI_REGISTRY_IMAGE/test:$CI_COMMIT_REF_SLUG
 
 cache:
   paths:
     - node_modules/
+
+.docker-login: &docker-login
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+
+build:builder-image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  <<: *docker-login
+  script:
+    - |
+      # Build the builder image with all dependencies
+      docker build -t $CONTAINER_BUILD_IMAGE -f- . <<EOF
+      FROM electronuserland/builder:wine
+      RUN apt-get update && apt-get install -y dpkg fakeroot wine mono-complete
+      WORKDIR /builds
+      COPY package*.json ./
+      RUN npm install
+      EOF
+    - docker push $CONTAINER_BUILD_IMAGE
+  rules:
+    - changes:
+        - package.json
+        - package-lock.json
+      when: always
+    - when: manual
+
+build:linux:
+  stage: build
+  image: $CONTAINER_BUILD_IMAGE
+  script:
+    - npm run build
+    - npx electron-builder --linux AppImage --publish never
+  artifacts:
+    paths:
+      - dist/**/*
+    expire_in: 1 week
+  only:
+    - main
+    - tags
+
+build:windows:
+  stage: build
+  image: $CONTAINER_BUILD_IMAGE
+  script:
+    - npm run build
+    - npx electron-builder --windows nsis --publish never
+  artifacts:
+    paths:
+      - dist/**/*
+    expire_in: 1 week
+  only:
+    - main
+    - tags
 
 sync-to-github:
   stage: build
@@ -120,42 +180,6 @@ sync-to-github:
     - main
     - tags
 
-build:linux:
-  stage: build
-  image: electronuserland/builder:wine
-  before_script:
-    - apt-get update
-    - apt-get install -y dpkg fakeroot
-    - npm install
-  script:
-    - npm run build
-    - npx electron-builder --linux AppImage --publish never
-  artifacts:
-    paths:
-      - dist/**/*
-    expire_in: 1 week
-  only:
-    - main
-    - tags
-
-build:windows:
-  stage: build
-  image: electronuserland/builder:wine
-  before_script:
-    - apt-get update
-    - apt-get install -y wine mono-complete
-    - npm install
-  script:
-    - npm run build
-    - npx electron-builder --windows nsis --publish never
-  artifacts:
-    paths:
-      - dist/**/*
-    expire_in: 1 week
-  only:
-    - main
-    - tags
-
 create_release:
   stage: release
   image: node:18
@@ -177,21 +201,24 @@ create_release:
     - |
       # Get version from package.json
       VERSION=$(node -e "console.log(require('./package.json').version)")
+      echo "Creating release v${VERSION}..."
       
-      # Check if release exists
-      RELEASE_EXISTS=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-        "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}" | \
-        jq -r '.message')
+      # Create the release
+      RELEASE_RESPONSE=$(curl --silent --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        --data "name=v${VERSION}" \
+        --data "tag_name=v${VERSION}" \
+        --data "description=Release v${VERSION}" \
+        --data "ref=${CI_COMMIT_SHA}" \
+        --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases")
       
-      # Create release if it doesn't exist
-      if [[ "$RELEASE_EXISTS" == "404 Release Not Found" ]]; then
-        curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --data "name=v${VERSION}" \
-          --data "tag_name=v${VERSION}" \
-          --data "description=Release v${VERSION}" \
-          --data "ref=${CI_COMMIT_SHA}" \
-          --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases"
+      # Check if release was created successfully
+      if [ "$(echo "$RELEASE_RESPONSE" | jq -r '.tag_name')" != "v${VERSION}" ]; then
+        echo "Failed to create release. Response:"
+        echo "$RELEASE_RESPONSE" | jq '.'
+        exit 1
       fi
+      
+      echo "Release v${VERSION} created successfully"
       
       # Upload each artifact
       find dist -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.zip" \) | while read file; do
@@ -203,16 +230,34 @@ create_release:
           --upload-file "$file" \
           --request POST "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/uploads")
         
+        # Check if upload was successful
+        if [ "$(echo "$UPLOAD_RESPONSE" | jq -r '.url')" = "null" ]; then
+          echo "Failed to upload $filename. Response:"
+          echo "$UPLOAD_RESPONSE" | jq '.'
+          continue
+        fi
+        
         # Get URL from response
-        UPLOAD_URL=$(echo $UPLOAD_RESPONSE | jq -r ".url")
+        UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r ".url")
         
         # Add file to release
-        curl --request POST \
+        LINK_RESPONSE=$(curl --silent --request POST \
           --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           --data "name=${filename}" \
           --data "url=${UPLOAD_URL}" \
-          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links"
+          "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links")
+        
+        # Check if link was created successfully
+        if [ "$(echo "$LINK_RESPONSE" | jq -r '.url')" = "null" ]; then
+          echo "Failed to create link for $filename. Response:"
+          echo "$LINK_RESPONSE" | jq '.'
+          continue
+        fi
+        
+        echo "Successfully uploaded and linked $filename"
       done
+      
+      echo "Release creation completed!"
   only:
     - main
     - tags 
