@@ -1399,7 +1399,8 @@
             zoom: {
               pan: {
                 enabled: true,
-                mode: 'xy'
+                mode: 'xy',
+                modifierKey: null // Allow panning without holding any modifier key
               },
               zoom: {
                 wheel: {
@@ -1411,9 +1412,7 @@
                 },
                 mode: 'xy',
                 drag: {
-                  enabled: true,
-                  backgroundColor: 'rgba(66, 133, 244, 0.1)',
-                  borderColor: 'rgba(66, 133, 244, 0.5)'
+                  enabled: false // Disable drag-to-zoom
                 },
                 sensitivity: 3, // Lower sensitivity for better control
                 onZoom: function() {
@@ -1502,7 +1501,8 @@
             zoom: {
               pan: {
                 enabled: true,
-                mode: 'xy'
+                mode: 'xy',
+                modifierKey: null // Allow panning without holding any modifier key
               },
               zoom: {
                 wheel: {
@@ -1513,6 +1513,9 @@
                   enabled: true
                 },
                 mode: 'xy',
+                drag: {
+                  enabled: false // Disable drag-to-zoom
+                },
                 sensitivity: 3, // Lower sensitivity for better control
                 onZoom: function() {
                   // Update manual zoom inputs to match current zoom state
