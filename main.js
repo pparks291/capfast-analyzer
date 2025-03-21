@@ -699,33 +699,40 @@ class TempStorage {
     buffer.length = 0;
   }
   
-  async *readDataPoints(signalId) {
-    // Flush any remaining data
-    await this.flushBuffer(signalId);
-    
-    const filePath = this.getFilePath(signalId);
-    if (!fs.existsSync(filePath)) return;
-    
-    // Read file in chunks to avoid memory issues
-    const fileStream = fs.createReadStream(filePath);
-    const rl = require('readline').createInterface({
-      input: fileStream,
-      crlfDelay: Infinity
-    });
-    
-    for await (const line of rl) {
-      if (line.trim()) {
-        yield JSON.parse(line);
-      }
-    }
-  }
-  
   async getDataPoints(signalId) {
-    const points = [];
-    for await (const point of this.readDataPoints(signalId)) {
-      points.push(point);
+    const filePath = this.getFilePath(signalId);
+    const dataPoints = [];
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        // Read from file
+        const fileContent = await fs.promises.readFile(filePath, 'utf8');
+        const lines = fileContent.split('\n').filter(line => line.trim());
+        
+        for (const line of lines) {
+          try {
+            const dataPoint = JSON.parse(line);
+            if (dataPoint && typeof dataPoint === 'object') {
+              dataPoints.push(dataPoint);
+            }
+          } catch (err) {
+            console.warn(`Error parsing data point: ${err.message}`);
+            continue;
+          }
+        }
+      }
+      
+      // Add any buffered points
+      if (this.signalBuffers[signalId]) {
+        dataPoints.push(...this.signalBuffers[signalId]);
+      }
+      
+      // Sort by timestamp
+      return dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+    } catch (err) {
+      console.error(`Error reading data points for signal ${signalId}: ${err.message}`);
+      return [];
     }
-    return points;
   }
   
   async cleanup() {
