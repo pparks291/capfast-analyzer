@@ -1524,22 +1524,19 @@ function calculateLatencyMetrics(signalData) {
     const signal = signalData[signalId];
     
     // Skip signals with too few data points
-    if (signal.length < MIN_DATA_POINTS) {
+    if (!signal || !signal.data || signal.data.length < MIN_DATA_POINTS) {
       return;
     }
-    
-    // Sort data points by timestamp
-    signal.sort((a, b) => a.timestamp - b.timestamp);
     
     // Extract latency values and calculate inter-packet timing
     const latencyValues = [];
     const timeIntervals = [];
     
-    for (let i = 0; i < signal.length; i++) {
-      latencyValues.push(signal[i].latency);
+    for (let i = 0; i < signal.data.length; i++) {
+      latencyValues.push(signal.data[i].latency);
       
       if (i > 0) {
-        timeIntervals.push(signal[i].timestamp - signal[i-1].timestamp);
+        timeIntervals.push(signal.data[i].timestamp - signal.data[i-1].timestamp);
       }
     }
     
@@ -1563,13 +1560,10 @@ function calculateLatencyMetrics(signalData) {
     // Create histogram data for frequency analysis
     const histogram = createHistogram(latencyValues, 20);
     
-    // Use all data points for visualization
-    const sampleData = signal;
-    
     // Store results
     results[signalId] = {
       stats: {
-        count,
+        count: signal.data.length,
         avgLatency,
         maxLatency,
         minLatency,
@@ -1577,7 +1571,7 @@ function calculateLatencyMetrics(signalData) {
         jitter
       },
       histogram,
-      sampleData
+      sampleData: signal.data
     };
   });
   
