@@ -331,49 +331,43 @@ create_release:
       upload_and_link_file() {
         local file="$1"
         local name="$2"
-        echo "Uploading $name..."
         
-        # First upload the file to GitLab project
-        UPLOAD_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          --form "file=@${file}" \
-          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/uploads")
+        echo "Uploading ${name}..."
         
-        echo "Upload response:"
-        echo "$UPLOAD_RESPONSE" | jq '.'
+        # First, upload the file to the project
+        local upload_response=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/uploads" \
+          --form "file=@${file}")
         
-        # Extract the path from the upload response and construct the full URL
-        UPLOAD_PATH=$(echo "$UPLOAD_RESPONSE" | jq -r '.full_path')
-        if [ -z "$UPLOAD_PATH" ] || [ "$UPLOAD_PATH" = "null" ]; then
-          echo "Failed to get upload path from response"
+        # Check if upload was successful
+        if [[ $(echo "$upload_response" | jq -r '.url') == "null" ]]; then
+          echo "Upload failed. Response: ${upload_response}"
           return 1
         fi
         
-        # Construct the complete asset URL using the GitLab instance URL
-        ASSET_URL="${CI_SERVER_URL}${UPLOAD_PATH}"
-        echo "Asset URL: ${ASSET_URL}"
+        # Extract the upload URL and construct the full asset URL
+        local upload_url=$(echo "$upload_response" | jq -r '.url')
+        local asset_url="${CI_PROJECT_URL}${upload_url}"
         
-        # Create JSON payload for the link
-        JSON_PAYLOAD=$(jq -n \
-          --arg name "$name" \
-          --arg url "$ASSET_URL" \
-          '{"name":$name,"url":$url,"link_type":"package"}')
+        echo "Asset URL: ${asset_url}"
         
-        # Now create a link to the uploaded file in the release
-        LINK_RESPONSE=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-          -H "Content-Type: application/json" \
-          -X POST \
+        # Create a link to the uploaded file in the release
+        local link_response=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/v${VERSION}/assets/links" \
-          --data "$JSON_PAYLOAD")
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"${name}\",\"url\":\"${asset_url}\",\"link_type\":\"package\"}")
+        
+        # Check if link creation was successful
+        if [[ $(echo "$link_response" | jq -r '.id') == "null" ]]; then
+          echo "Failed to create link. Response: ${link_response}"
+          return 1
+        fi
         
         echo "Link response:"
-        echo "$LINK_RESPONSE" | jq '.'
+        echo "$link_response" | jq .
         
-        if [ "$(echo "$LINK_RESPONSE" | jq -r '.message')" = "404 Not found" ]; then
-          echo "Error: Failed to link asset to release. Make sure the release exists."
-          return 1
-        fi
-        
-        echo "Successfully uploaded and linked $name"
+        echo "Successfully uploaded and linked ${name}"
+        return 0
       }
       
       # Upload Windows installer
