@@ -916,10 +916,12 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
     const results = {};
     for (const signalId of selectedSignals) {
       const dataPoints = await tempStorage.getDataPoints(signalId);
-      if (dataPoints.length > 0) {
+      if (dataPoints && dataPoints.length > 0) {
+        // Ensure we have an array of data points before sorting
+        const sortedDataPoints = Array.isArray(dataPoints) ? dataPoints : [];
         results[signalId] = {
-          data: dataPoints,
-          stats: calculateLatencyMetrics(dataPoints)
+          data: sortedDataPoints,
+          stats: calculateLatencyMetrics(sortedDataPoints)
         };
       }
     }
