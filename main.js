@@ -640,9 +640,8 @@ async function identifyActiveSignals(fd, fileSize, progressCallback) {
 
 // Temporary storage manager for signal data
 class TempStorage {
-  constructor(prefix) {
+  constructor(prefix, fileSize) {
     this.prefix = prefix;
-    this.bufferSize = 1000; // Number of data points to buffer before writing
     this.signalBuffers = new Map(); // In-memory buffers
     this.signalFiles = new Map();   // File handles
     this.tempDir = path.join(os.tmpdir(), 'capfast-analyzer');
@@ -651,6 +650,26 @@ class TempStorage {
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
+  }
+
+  calculateOptimalBufferSize() {
+    const heapStats = v8.getHeapStatistics();
+    const availableHeap = heapStats.heap_size_limit - heapStats.used_heap_size;
+    const targetHeapUsage = heapStats.heap_size_limit * 0.8; // Target 80% of heap
+    const currentHeapUsage = heapStats.used_heap_size;
+    
+    // If we're already using more than 80% of heap, force a small buffer
+    if (currentHeapUsage > targetHeapUsage) {
+      return 1000; // Minimum buffer size
+    }
+    
+    // Calculate how many data points we can fit in the remaining space
+    // Each data point is roughly 32 bytes (timestamp + latency + object overhead)
+    const bytesPerPoint = 32;
+    const maxPoints = Math.floor((targetHeapUsage - currentHeapUsage) / bytesPerPoint);
+    
+    // Use a reasonable buffer size that's at least 1000 points
+    return Math.max(1000, Math.min(maxPoints, 1000000));
   }
   
   getFilePath(signalId) {
@@ -666,9 +685,18 @@ class TempStorage {
     const buffer = this.signalBuffers.get(signalId);
     buffer.push(dataPoint);
     
-    // Flush to disk if buffer is full
-    if (buffer.length >= this.bufferSize) {
-      await this.flushBuffer(signalId);
+    // Check memory usage and flush if needed
+    const heapStats = v8.getHeapStatistics();
+    const heapUsagePercent = (heapStats.used_heap_size / heapStats.heap_size_limit) * 100;
+    
+    // If we're using more than 80% of heap, flush all buffers
+    if (heapUsagePercent > 80) {
+      console.log(`High memory usage (${heapUsagePercent.toFixed(1)}%), flushing buffers to disk`);
+      for (const [sid, buf] of this.signalBuffers.entries()) {
+        if (buf.length > 0) {
+          await this.flushBuffer(sid);
+        }
+      }
     }
   }
   
@@ -737,7 +765,7 @@ class TempStorage {
 
 // Second pass: collect detailed metrics for all signals - USING ADAPTIVE BATCHING AND TEMP STORAGE
 async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallback) {
-  const tempStorage = new TempStorage('signal_metrics');
+  const tempStorage = new TempStorage('signal_metrics', fileSize);
   let packetCount = 0;
   let processedBytes = 24; // Start after global header
   let currentPosition = 24;
