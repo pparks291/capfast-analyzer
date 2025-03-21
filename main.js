@@ -867,48 +867,48 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
       
       // After each batch, report progress
       const progressPercent = Math.floor((processedBytes / fileSize) * 100);
-      if (progressPercent !== lastProgressReport) {
+      
+      // Update progress more frequently, even if percentage hasn't changed
+      if (batchPackets > 0) {
         // Calculate processing speed and estimate time remaining
         const now = Date.now();
         const timeElapsed = now - batchStartTime;
         
-        if (timeElapsed > 1000) { // Update once per second
-          const bytesProcessed = processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen));
-          const bytesPerSecond = bytesProcessed / (timeElapsed / 1000);
-          const remainingBytes = fileSize - processedBytes;
-          const estimatedTimeRemaining = remainingBytes / bytesPerSecond;
+        const bytesProcessed = processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen));
+        const bytesPerSecond = bytesProcessed / (timeElapsed / 1000);
+        const remainingBytes = fileSize - processedBytes;
+        const estimatedTimeRemaining = remainingBytes / bytesPerSecond;
+        
+        // Update progress with more granular information
+        progressCallback(progressPercent, packetCount, estimatedTimeRemaining);
+        
+        // Log memory status every 5% progress instead of 10%
+        if (progressPercent % 5 === 0) {
+          const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
           
-          progressCallback(progressPercent, packetCount, estimatedTimeRemaining);
-          lastProgressReport = progressPercent;
-          
-          // Log memory status every 10% progress
-          if (progressPercent % 10 === 0) {
-            const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
+          // If memory usage is getting high, adjust batch size more aggressively
+          if (memUsage.heap.usedPercent > 85) {
+            // Drastically reduce batch size to handle memory pressure
+            BATCH_SIZE = Math.max(25, Math.floor(BATCH_SIZE * 0.3));
             
-            // If memory usage is getting high, adjust batch size more aggressively
-            if (memUsage.heap.usedPercent > 85) {
-              // Drastically reduce batch size to handle memory pressure
-              BATCH_SIZE = Math.max(25, Math.floor(BATCH_SIZE * 0.3));
-              
-              // Force garbage collection
-              if (global.gc) {
-                global.gc();
-              }
-              
-              // Report memory pressure action to UI
-              updateAnalysisStatus({
-                status: 'memory-pressure',
-                message: `High memory usage (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing batch size to ${BATCH_SIZE} packets.`,
-                progress: progressPercent
-              });
-            } else {
-              // Normal memory status report
-              updateAnalysisStatus({
-                status: 'memory',
-                message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
-                progress: progressPercent
-              });
+            // Force garbage collection
+            if (global.gc) {
+              global.gc();
             }
+            
+            // Report memory pressure action to UI
+            updateAnalysisStatus({
+              status: 'memory-pressure',
+              message: `High memory usage (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing batch size to ${BATCH_SIZE} packets.`,
+              progress: progressPercent
+            });
+          } else {
+            // Normal memory status report
+            updateAnalysisStatus({
+              status: 'memory',
+              message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
+              progress: progressPercent
+            });
           }
         }
       }
