@@ -645,31 +645,12 @@ class TempStorage {
     this.signalBuffers = new Map(); // In-memory buffers
     this.signalFiles = new Map();   // File handles
     this.tempDir = path.join(os.tmpdir(), 'capfast-analyzer');
+    this.maxBufferSize = 10000; // Maximum number of points to keep in memory per signal
     
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
-  }
-
-  calculateOptimalBufferSize() {
-    const heapStats = v8.getHeapStatistics();
-    const availableHeap = heapStats.heap_size_limit - heapStats.used_heap_size;
-    const targetHeapUsage = heapStats.heap_size_limit * 0.8; // Target 80% of heap
-    const currentHeapUsage = heapStats.used_heap_size;
-    
-    // If we're already using more than 80% of heap, force a small buffer
-    if (currentHeapUsage > targetHeapUsage) {
-      return 1000; // Minimum buffer size
-    }
-    
-    // Calculate how many data points we can fit in the remaining space
-    // Each data point is roughly 32 bytes (timestamp + latency + object overhead)
-    const bytesPerPoint = 32;
-    const maxPoints = Math.floor((targetHeapUsage - currentHeapUsage) / bytesPerPoint);
-    
-    // Use a reasonable buffer size that's at least 1000 points
-    return Math.max(1000, Math.min(maxPoints, 1000000));
   }
   
   getFilePath(signalId) {
@@ -685,13 +666,17 @@ class TempStorage {
     const buffer = this.signalBuffers.get(signalId);
     buffer.push(dataPoint);
     
-    // Check memory usage and flush if needed
+    // If buffer is full, flush to disk
+    if (buffer.length >= this.maxBufferSize) {
+      await this.flushBuffer(signalId);
+    }
+    
+    // Check memory usage and flush all buffers if needed
     const heapStats = v8.getHeapStatistics();
     const heapUsagePercent = (heapStats.used_heap_size / heapStats.heap_size_limit) * 100;
     
-    // If we're using more than 80% of heap, flush all buffers
-    if (heapUsagePercent > 80) {
-      console.log(`High memory usage (${heapUsagePercent.toFixed(1)}%), flushing buffers to disk`);
+    if (heapUsagePercent > 70) { // Flush if using more than 70% of heap
+      console.log(`High memory usage (${heapUsagePercent.toFixed(1)}%), flushing all buffers to disk`);
       for (const [sid, buf] of this.signalBuffers.entries()) {
         if (buf.length > 0) {
           await this.flushBuffer(sid);
@@ -706,10 +691,8 @@ class TempStorage {
     
     const filePath = this.getFilePath(signalId);
     
-    // Convert buffer to string
+    // Convert buffer to string and append to file
     const dataString = buffer.map(JSON.stringify).join('\n') + '\n';
-    
-    // Append to file
     fs.appendFileSync(filePath, dataString);
     
     // Clear buffer
@@ -723,7 +706,7 @@ class TempStorage {
     const filePath = this.getFilePath(signalId);
     if (!fs.existsSync(filePath)) return;
     
-    // Read file line by line
+    // Read file in chunks to avoid memory issues
     const fileStream = fs.createReadStream(filePath);
     const rl = require('readline').createInterface({
       input: fileStream,
@@ -772,11 +755,16 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
   let lastProgressReport = 0;
   let lastPacketInclLen = 0;
   
-  // Build lookup set for faster checking
+  // Batch processing configuration - starts with default but will adapt
+  let BATCH_SIZE = 1000; // Initial batch size
+  
+  // Create a set for faster lookups
   const selectedSignalsSet = new Set(selectedSignals);
   
-  // Batch processing configuration - starts with default but will adapt
-  let BATCH_SIZE = 1000;
+  // Pre-calculate which signal types we care about
+  const signalTypes = new Set(selectedSignals.map(s => s.split('-')[0]));
+  
+  // Create a buffer for packet headers
   const packetHeaderBuffer = Buffer.alloc(16);
   
   try {
@@ -785,14 +773,16 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
     
     // Process packets in batches until the end of file
     while (processedBytes < fileSize) {
+      // Check memory conditions and adjust batch size
       BATCH_SIZE = memoryMonitor.getOptimalBatchSize(BATCH_SIZE, fileSize);
       
       let batchPackets = 0;
       const batchStartTime = Date.now();
       
+      // Process a batch of packets
       while (batchPackets < BATCH_SIZE && processedBytes < fileSize) {
         try {
-          // Read packet header (16 bytes)
+          // Read packet header
           const bytesRead = fs.readSync(fd, packetHeaderBuffer, 0, 16, currentPosition);
           if (bytesRead < 16) {
             break; // End of file or incomplete packet header
@@ -811,43 +801,57 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
             processedBytes += 20;
             continue;
           }
-
+          
           // Store the last valid packet length
           lastPacketInclLen = packetHeader.incl_len;
           
-          // Calculate timestamp in seconds (Unix timestamp)
-          const timestamp = getProperTimestamp(packetHeader);
-          
-          // For efficiency, first check if packet has a signal we care about
-          let hasRelevantSignal = false;
+          // Quick check if this packet might contain signals we care about
           if (packetHeader.incl_len > 34) {
-            // Peek at the header to see if it's an IP packet we might care about
-            const headerBuffer = Buffer.alloc(Math.min(34, packetHeader.incl_len));
-            fs.readSync(fd, headerBuffer, 0, Math.min(34, packetHeader.incl_len), currentPosition);
+            // Read just the ethernet header to check packet type
+            const headerBuffer = Buffer.alloc(14);
+            fs.readSync(fd, headerBuffer, 0, 14, currentPosition);
             
-            // Quick check for IP packets
+            // Check if it's an IP packet
             const etherType = (headerBuffer[12] << 8) | headerBuffer[13];
-            hasRelevantSignal = (etherType === 0x0800);
-          }
-          
-          if (hasRelevantSignal) {
-            const packetDataBuffer = Buffer.alloc(packetHeader.incl_len);
-            fs.readSync(fd, packetDataBuffer, 0, packetHeader.incl_len, currentPosition);
-            
-            const signalIds = identifySignals(packetHeader, packetDataBuffer);
-            
-            for (const signalId of signalIds) {
-              if (selectedSignalsSet.has(signalId)) {
-                const latencyMetric = calculateLatencyMetric(packetHeader, packetDataBuffer, signalId);
+            if (etherType === 0x0800) {
+              // Read IP header to get protocol
+              const ipHeaderBuffer = Buffer.alloc(20);
+              fs.readSync(fd, ipHeaderBuffer, 0, 20, currentPosition + 14);
+              
+              const protocol = ipHeaderBuffer[9];
+              const isTCP = protocol === 6;
+              const isUDP = protocol === 17;
+              
+              // Only process if it's a protocol we care about
+              if ((isTCP && signalTypes.has('TCP')) || (isUDP && signalTypes.has('UDP'))) {
+                const packetDataBuffer = Buffer.alloc(packetHeader.incl_len);
+                fs.readSync(fd, packetDataBuffer, 0, packetHeader.incl_len, currentPosition);
                 
-                if (latencyMetric !== null) {
-                  // Store data point in temp storage instead of memory
-                  await tempStorage.addDataPoint(signalId, {
-                    timestamp: timestamp,
-                    latency: latencyMetric
-                  });
+                const signalIds = identifySignals(packetHeader, packetDataBuffer);
+                
+                for (const signalId of signalIds) {
+                  if (selectedSignalsSet.has(signalId)) {
+                    const latencyMetric = calculateLatencyMetric(packetHeader, packetDataBuffer, signalId);
+                    
+                    if (latencyMetric !== null) {
+                      await tempStorage.addDataPoint(signalId, {
+                        timestamp: getProperTimestamp(packetHeader),
+                        latency: latencyMetric
+                      });
+                    }
+                  }
                 }
+              } else {
+                // Skip the rest of the packet
+                currentPosition += packetHeader.incl_len;
+                processedBytes += 16 + packetHeader.incl_len;
+                continue;
               }
+            } else {
+              // Skip non-IP packets
+              currentPosition += packetHeader.incl_len;
+              processedBytes += 16 + packetHeader.incl_len;
+              continue;
             }
           }
           
@@ -871,45 +875,24 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
         // Calculate processing speed and estimate time remaining
         const now = Date.now();
         const timeElapsed = now - batchStartTime;
+        const bytesProcessed = processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen));
+        const bytesPerSecond = bytesProcessed / (timeElapsed / 1000);
+        const remainingBytes = fileSize - processedBytes;
+        const estimatedTimeRemaining = remainingBytes / bytesPerSecond;
         
-        if (timeElapsed > 1000) { // Update once per second
-          const bytesProcessed = processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen));
-          const bytesPerSecond = bytesProcessed / (timeElapsed / 1000);
-          const remainingBytes = fileSize - processedBytes;
-          const estimatedTimeRemaining = remainingBytes / bytesPerSecond;
+        progressCallback(progressPercent, packetCount, estimatedTimeRemaining);
+        lastProgressReport = progressPercent;
+        
+        // Log memory status every 10% progress
+        if (progressPercent % 10 === 0) {
+          const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
           
-          progressCallback(progressPercent, packetCount, estimatedTimeRemaining);
-          lastProgressReport = progressPercent;
-          
-          // Log memory status every 10% progress
-          if (progressPercent % 10 === 0) {
-            const memUsage = memoryMonitor.logMemoryStatus(`metrics collection (${progressPercent}%)`);
-            
-            // If memory usage is getting high, adjust batch size more aggressively
-            if (memUsage.heap.usedPercent > 85) {
-              // Drastically reduce batch size to handle memory pressure
-              BATCH_SIZE = Math.max(25, Math.floor(BATCH_SIZE * 0.3));
-              
-              // Force garbage collection
-              if (global.gc) {
-                global.gc();
-              }
-              
-              // Report memory pressure action to UI
-              updateAnalysisStatus({
-                status: 'memory-pressure',
-                message: `High memory usage (${memUsage.heap.usedPercent.toFixed(1)}%). Reducing batch size to ${BATCH_SIZE} packets.`,
-                progress: progressPercent
-              });
-            } else {
-              // Normal memory status report
-              updateAnalysisStatus({
-                status: 'memory',
-                message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
-                progress: progressPercent
-              });
-            }
-          }
+          // Report memory status to UI
+          updateAnalysisStatus({
+            status: 'memory',
+            message: `Memory usage: Heap ${memUsage.heap.usedPercent.toFixed(1)}%, System ${memUsage.system.usedPercent.toFixed(1)}%`,
+            progress: progressPercent
+          });
         }
       }
       
@@ -918,24 +901,33 @@ async function collectSignalMetrics(fd, fileSize, selectedSignals, progressCallb
       const batchSizeMB = batchPackets > 0 ? (processedBytes - (currentPosition - batchPackets * (16 + lastPacketInclLen))) / (1024 * 1024) : 0;
       const throughputMBps = batchTime > 0 ? (batchSizeMB / (batchTime / 1000)).toFixed(2) : 0;
       
-      if (batchPackets > 0 && (processedBytes % (10 * 1024 * 1024) < BATCH_SIZE * (16 + 100))) { // Log every ~10MB
+      if (batchPackets > 0) {
         console.log(`Metrics batch: ${batchPackets} packets, ${throughputMBps} MB/s, batch size: ${BATCH_SIZE}`);
       }
       
-      // Allow event loop to process
+      // Allow event loop to process and GC to run
       await new Promise(resolve => setTimeout(resolve, 0));
+      if (global.gc) {
+        global.gc();
+      }
     }
     
-    // Process the collected data
-    const signalData = {};
+    // Collect all data points from temp storage
+    const results = {};
     for (const signalId of selectedSignals) {
-      signalData[signalId] = await tempStorage.getDataPoints(signalId);
+      const dataPoints = await tempStorage.getDataPoints(signalId);
+      if (dataPoints.length > 0) {
+        results[signalId] = {
+          data: dataPoints,
+          stats: calculateLatencyMetrics(dataPoints)
+        };
+      }
     }
     
-    // Cleanup temporary files
+    // Clean up temp storage
     await tempStorage.cleanup();
     
-    return signalData;
+    return results;
     
   } catch (error) {
     // Ensure cleanup on error
@@ -1410,8 +1402,6 @@ function calculateLatencyMetric(header, data, signalId) {
                 const reverseFlow = packetFlowMap.get(reverseFlowId);
                 
                 // Look for packets in the reverse direction that this might be acknowledging
-                let foundMatch = false;
-                
                 for (let i = reverseFlow.packets.length - 1; i >= 0; i--) {
                   const prevPacket = reverseFlow.packets[i];
                   
@@ -1427,8 +1417,6 @@ function calculateLatencyMetric(header, data, signalId) {
                       matchedPackets++;
                       return latency;
                     }
-                    
-                    foundMatch = true;
                     break;
                   }
                 }
@@ -1477,27 +1465,16 @@ function calculateLatencyMetric(header, data, signalId) {
             
             // Track unmatched packets for logging
             unmatchedPackets++;
-            
-            // Use a variable default based on signal type to avoid the "flat line" problem
-            // This creates some variation in the visualization until real measurements are available
-            const connParts = signalId.split(':');
-            if (connParts.length >= 2) {
-              const port = parseInt(connParts[1].split('->')[0], 10);
-              // Create a deterministic but varied default value based on port number
-              return 100 + (port % 900); // Values between 100-999 μs
-            }
           }
         }
       }
     } catch (e) {
       console.error("Error in latency calculation:", e);
-      // Fall back to timestamp-based metric
     }
   }
   
-  // If we reach here, we couldn't calculate a real latency
-  // Return a somewhat random value based on the timestamp to avoid the flat line effect
-  return Math.max(50, Math.min(5000, (header.ts_usec % 5000) + 50));
+  // If we can't calculate real latency, return null
+  return null;
 }
 
 // Periodically clean up old flow records to prevent memory leaks
@@ -1645,54 +1622,6 @@ function createHistogram(values, bins) {
     bins: binCenters,
     counts
   };
-}
-
-// Reduce data points array to target length while preserving distribution
-function reduceDataPoints(dataPoints, targetLength) {
-  // If already at or below target length, return as is
-  if (dataPoints.length <= targetLength) {
-    return dataPoints;
-  }
-  
-  // For very large reductions, use systematic sampling
-  if (dataPoints.length > targetLength * 10) {
-    // Calculate the sampling interval
-    const interval = Math.floor(dataPoints.length / targetLength);
-    const result = [];
-    
-    // Systematic sampling: take every nth item
-    for (let i = 0; i < dataPoints.length; i += interval) {
-      result.push(dataPoints[i]);
-    }
-    
-    // Add the last point if it's not already included
-    if (result.length < targetLength && result[result.length - 1] !== dataPoints[dataPoints.length - 1]) {
-      result.push(dataPoints[dataPoints.length - 1]);
-    }
-    
-    return result;
-  }
-  
-  // For smaller reductions, use a more precise approach
-  // Sort the data by timestamp if not already sorted
-  dataPoints.sort((a, b) => a.timestamp - b.timestamp);
-  
-  // We want to keep the first and last points for time range consistency
-  const result = [dataPoints[0]];
-  
-  // Calculate interval between points
-  const step = (dataPoints.length - 2) / (targetLength - 2);
-  
-  // Add interior points
-  for (let i = 1; i < targetLength - 1; i++) {
-    const index = Math.floor(1 + i * step);
-    result.push(dataPoints[index]);
-  }
-  
-  // Add the last point
-  result.push(dataPoints[dataPoints.length - 1]);
-  
-  return result;
 }
 
 // Update progress bar and status
