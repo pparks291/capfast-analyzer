@@ -25,9 +25,10 @@ jobs:
       - name: Install dependencies
         run: |
           echo "Installing dependencies..."
-          npm ci
-          # Ensure dmg-license is installed
-          npm install --save-dev dmg-license@1.0.11
+          # Use npm install instead of npm ci to update package-lock.json
+          npm install
+          # Add dmg-license and other required dependencies
+          npm install --save-dev dmg-license@1.0.11 @types/plist@3.0.5 @types/verror@1.10.11 crc@3.8.0 iconv-corefoundation@1.1.7 smart-buffer@4.2.0 verror@1.10.1
           echo "Dependencies installed successfully"
           echo "Installed packages:"
           npm list --depth=0
