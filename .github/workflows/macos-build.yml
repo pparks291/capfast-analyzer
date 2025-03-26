@@ -26,9 +26,15 @@ jobs:
         run: |
           echo "Installing dependencies..."
           npm ci
+          # Ensure dmg-license is installed
+          npm install --save-dev dmg-license@1.0.11
           echo "Dependencies installed successfully"
+          echo "Installed packages:"
+          npm list --depth=0
           echo "Node modules directory contents:"
           ls -la node_modules
+          echo "dmg-license directory:"
+          ls -la node_modules/dmg-license || echo "dmg-license not found!"
           echo "Project root contents:"
           ls -la
         
