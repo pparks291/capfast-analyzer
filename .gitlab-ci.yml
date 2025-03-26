@@ -81,7 +81,8 @@ build:linux:
   script:
     - |
       echo "Installing dependencies..."
-      npm ci
+      # Skip optional dependencies to avoid macOS-specific packages
+      npm install --no-optional
       
       echo "Building application..."
       npm run build
@@ -102,7 +103,8 @@ build:windows:
   script:
     - |
       echo "Installing dependencies..."
-      npm ci
+      # Skip optional dependencies to avoid macOS-specific packages
+      npm install --no-optional
       
       echo "Building application..."
       npm run build
