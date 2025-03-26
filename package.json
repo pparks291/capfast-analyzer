@@ -1,13 +1,13 @@
 {
-    "name": "capfast-analyzer",
+    "name": "capsa-analyzer",
     "version": "1.0.0",
-    "description": "A tool for analyzing CAPFAST files",
+    "description": "A tool for analyzing CAPSA files",
     "author": {
         "name": "Patrick Parks",
         "email": "patrick.parks@example.com"
     },
     "license": "MIT",
-    "homepage": "https://github.com/patrickparks/capFastAnalyzer",
+    "homepage": "https://github.com/patrickparks/capsaAnalyzer",
     "main": "main.js",
     "scripts": {
         "start": "electron .",
@@ -27,8 +27,8 @@
         "electron-builder": "^24.6.4"
     },
     "build": {
-        "appId": "com.capfast.analyzer",
-        "productName": "CapFast Analyzer",
+        "appId": "com.capsa.analyzer",
+        "productName": "Capsa Analyzer",
         "directories": {
             "output": "dist",
             "buildResources": "build"
@@ -69,7 +69,7 @@
                 "AppImage"
             ],
             "category": "Utility",
-            "executableName": "capfast-analyzer",
+            "executableName": "capsa-analyzer",
             "artifactName": "${productName}-${version}.${ext}"
         },
         "nsis": {

@@ -93,15 +93,15 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('js-flags', '--expose-gc');
 
 // Early startup logging
-console.log('Starting CapFast Analyzer...');
+console.log('Starting Capsa Analyzer...');
 console.log('Platform:', process.platform);
 console.log('Arch:', process.arch);
 console.log('Node version:', process.versions.node);
 console.log('Electron version:', process.versions.electron);
 
 // Write to a log file in case console output isn't visible
-const logFile = path.join(os.homedir(), 'capfast-startup.log');
-fs.writeFileSync(logFile, 'CapFast Analyzer starting at ' + new Date().toString() + '\n');
+const logFile = path.join(os.homedir(), 'capsa-startup.log');
+fs.writeFileSync(logFile, 'Capsa Analyzer starting at ' + new Date().toString() + '\n');
 
 // Log system information
 console.log('System Information:');
@@ -251,7 +251,7 @@ ipcMain.handle('get-file-stats', async (event, filePath) => {
 // Handle save dialog
 ipcMain.handle('show-save-dialog', async () => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    filters: [{ name: 'CapFast Analysis', extensions: ['cfa'] }],
+    filters: [{ name: 'Capsa Analysis', extensions: ['cfa'] }],
     defaultPath: 'analysis_results.cfa'
   });
   
@@ -264,7 +264,7 @@ ipcMain.handle('show-save-dialog', async () => {
 // Handle load dialog
 ipcMain.handle('show-load-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'CapFast Analysis', extensions: ['cfa'] }],
+    filters: [{ name: 'Capsa Analysis', extensions: ['cfa'] }],
     properties: ['openFile']
   });
   
@@ -644,7 +644,7 @@ class TempStorage {
     this.prefix = prefix;
     this.signalBuffers = new Map(); // In-memory buffers
     this.signalFiles = new Map();   // File handles
-    this.tempDir = path.join(os.tmpdir(), 'capfast-analyzer');
+    this.tempDir = path.join(os.tmpdir(), 'capsa-analyzer');
     
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {

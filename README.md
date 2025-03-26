@@ -1,8 +1,8 @@
-# CapFast Latency Analyzer
+# Capsa Latency Analyzer
 
-A powerful desktop application for analyzing network capture files and visualizing latency metrics. CapFast helps network engineers and developers identify performance bottlenecks and understand latency patterns in their network traffic.
+A powerful desktop application for analyzing network capture files and visualizing latency metrics. Capsa helps network engineers and developers identify performance bottlenecks and understand latency patterns in their network traffic.
 
-![CapFast Screenshot](https://via.placeholder.com/800x450?text=CapFast+Analyzer+Screenshot)
+![Capsa Screenshot](https://via.placeholder.com/800x450?text=Capsa+Analyzer+Screenshot)
 
 ## Features
 
@@ -22,11 +22,11 @@ A powerful desktop application for analyzing network capture files and visualizi
 
 ### Installation
 
-Download the latest release for your platform from the [Releases](https://gitlab.com/nsf-noirlab/gemini/rtsw/user-tools/capfast-analyzer/-/releases) page:
+Download the latest release for your platform from the [Releases](https://gitlab.com/nsf-noirlab/gemini/rtsw/user-tools/capsa-analyzer/-/releases) page:
 
-- Windows: `CapFast-Analyzer-Setup.exe`
-- macOS: `CapFast-Analyzer.dmg`
-- Linux: `CapFast-Analyzer.AppImage`
+- Windows: `Capsa-Analyzer-Setup.exe`
+- macOS: `Capsa-Analyzer.dmg`
+- Linux: `Capsa-Analyzer.AppImage`
 
 ### Running the Application
 
@@ -46,8 +46,8 @@ Download the latest release for your platform from the [Releases](https://gitlab
 
 ```bash
 # Clone the repository
-git clone https://gitlab.com/nsf-noirlab/gemini/rtsw/user-tools/capfast-analyzer.git
-cd capfast-analyzer
+git clone https://gitlab.com/nsf-noirlab/gemini/rtsw/user-tools/capsa-analyzer.git
+cd capsa-analyzer
 
 # Install dependencies
 npm install
